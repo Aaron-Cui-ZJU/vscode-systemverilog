@@ -1,5 +1,22 @@
 # Change Log
 
+## 1.0.2
+
+- Add class support: classes are indexed even when declared with leading
+  modifiers (`virtual`, `local`, `protected`, `static`, `pure`, `interface`).
+- Hover a variable whose type is a class or interface to jump to the type
+  definition; hover a class name (for example the base in `extends Base`) to
+  jump to the class.
+- Resolve class members and functions inherited across files through the
+  `extends` chain; hovering an inherited member or function offers a link to
+  its declaration/definition.
+- Handle out-of-body method definitions (`function void Class::method(...)`)
+  when resolving the enclosing class.
+- Fix extern function parsing whose capture groups were misaligned, so
+  `extern` function/method names are indexed correctly.
+- Build a resident workspace symbol index in the background and keep it in
+  sync on file create, change, delete and save for fast lookups.
+
 ## 1.0.1
 
 - Add module instance outline: the Outline view / Go to Symbol shows the
