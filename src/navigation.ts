@@ -430,15 +430,9 @@ function matchParen(text: string, open: number): number {
 }
 
 // Theme-aware colors used to make the port direction stand out in the hover.
-const DIRECTION_COLORS: Record<string, string> = {
-  input: 'var(--vscode-charts-blue)',
-  output: 'var(--vscode-charts-orange)',
-  inout: 'var(--vscode-charts-purple)',
-  ref: 'var(--vscode-charts-green)',
-};
-
-function directionBadge(dir: string): string {
-  const color = DIRECTION_COLORS[dir];
+// Defaults live in config (systemverilog.portDirectionColors).
+function directionBadge(dir: string, colors: Record<string, string>): string {
+  const color = colors[dir];
   if (!color) {
     return dir;
   }
@@ -463,12 +457,13 @@ async function buildPortHover(binding: PortBinding): Promise<vscode.MarkdownStri
     ((port.type || '').match(/^(input|output|inout|ref)\b/) || [])[0] ||
     ''
   ).trim();
+  const colors = getConfig().portDirectionColors;
   const md = new vscode.MarkdownString();
   md.isTrusted = true;
   md.supportHtml = true;
   md.appendMarkdown(`**${binding.moduleType}** port \`${decl}\``);
   if (dir) {
-    md.appendMarkdown(`\n\ndirection: ${directionBadge(dir)}`);
+    md.appendMarkdown(`\n\ndirection: ${directionBadge(dir, colors)}`);
   }
   if (dir === 'output') {
     md.appendMarkdown(

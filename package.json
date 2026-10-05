@@ -125,6 +125,11 @@
         "command": "systemverilog.lint",
         "title": "Verilog: Linting",
         "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.configurePortColors",
+        "title": "Verilog: Configure Port Hover Colors",
+        "category": "Verilog"
       }
     ],
     "keybindings": [
@@ -285,6 +290,34 @@
           "type": "boolean",
           "default": false,
           "description": "Show links to driver/reference for signals."
+        },
+        "systemverilog.portDirectionColors": {
+          "type": "object",
+          "description": "Colors for the port direction badge shown in the port hover. Accepts any CSS color, including VS Code theme variables such as var(--vscode-charts-blue). Missing keys fall back to the default.",
+          "properties": {
+            "input": {
+              "type": "string",
+              "default": "var(--vscode-charts-blue)"
+            },
+            "output": {
+              "type": "string",
+              "default": "var(--vscode-charts-orange)"
+            },
+            "inout": {
+              "type": "string",
+              "default": "var(--vscode-charts-purple)"
+            },
+            "ref": {
+              "type": "string",
+              "default": "var(--vscode-charts-green)"
+            }
+          },
+          "default": {
+            "input": "var(--vscode-charts-blue)",
+            "output": "var(--vscode-charts-orange)",
+            "inout": "var(--vscode-charts-purple)",
+            "ref": "var(--vscode-charts-green)"
+          }
         },
         "systemverilog.oneBindPerLine": {
           "type": "boolean",

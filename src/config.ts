@@ -10,6 +10,7 @@ export interface SvConfig {
   tooltipShowModuleOnPort: boolean;
   tooltipShowRefs: boolean;
   tooltipShowSignalLinks: boolean;
+  portDirectionColors: Record<string, string>;
   oneBindPerLine: boolean;
   oneDeclPerLine: boolean;
   maxLineLength: number;
@@ -59,6 +60,29 @@ export interface SvConfig {
 
 export type CompletionEntry = [string, string, string];
 
+// CSS colors used for the port direction badge in the hover. Values may be any
+// CSS color, including VS Code theme variables such as var(--vscode-charts-blue).
+export const DEFAULT_PORT_DIRECTION_COLORS: Record<string, string> = {
+  input: 'var(--vscode-charts-blue)',
+  output: 'var(--vscode-charts-orange)',
+  inout: 'var(--vscode-charts-purple)',
+  ref: 'var(--vscode-charts-green)',
+};
+
+// Fill any missing or invalid user entries with the built-in defaults.
+function mergePortDirectionColors(v: unknown): Record<string, string> {
+  const out: Record<string, string> = { ...DEFAULT_PORT_DIRECTION_COLORS };
+  if (v && typeof v === 'object') {
+    for (const key of Object.keys(out)) {
+      const value = (v as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value.trim()) {
+        out[key] = value;
+      }
+    }
+  }
+  return out;
+}
+
 export function getConfig(): SvConfig {
   const c = vscode.workspace.getConfiguration('systemverilog');
   const arr = (v: any): string[] => (Array.isArray(v) ? v.map(String) : []);
@@ -74,6 +98,7 @@ export function getConfig(): SvConfig {
     tooltipShowModuleOnPort: c.get('tooltipShowModuleOnPort', false),
     tooltipShowRefs: c.get('tooltipShowRefs', true),
     tooltipShowSignalLinks: c.get('tooltipShowSignalLinks', false),
+    portDirectionColors: mergePortDirectionColors(c.get('portDirectionColors')),
     oneBindPerLine: c.get('oneBindPerLine', true),
     oneDeclPerLine: c.get('oneDeclPerLine', false),
     maxLineLength: c.get('maxLineLength', 120),
