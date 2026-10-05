@@ -23,6 +23,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -38,6 +40,9 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Update changelog
+        run: node scripts/update-changelog.js
 
       - name: Publish to Visual Studio Marketplace
         env:

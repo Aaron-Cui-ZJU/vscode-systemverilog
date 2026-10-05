@@ -530,7 +530,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "node test/parser.test.js && node test/beautifier.test.js"
+    "test": "node test/parser.test.js && node test/beautifier.test.js",
+    "changelog": "node scripts/update-changelog.js",
+    "release": "node scripts/release.js"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
