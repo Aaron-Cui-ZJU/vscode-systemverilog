@@ -13,6 +13,7 @@ export function activate(context: vscode.ExtensionContext): void {
   logger.initLogger(context);
   logger.info('initializing workspace index');
   initIndex();
+  INDEX.start();
 
   registerNavigation(context);
   registerSymbols(context);
@@ -33,11 +34,25 @@ export function activate(context: vscode.ExtensionContext): void {
     )
   );
 
+  const watcher = vscode.workspace.createFileSystemWatcher('**/*.{v,sv,vh,svh}');
   context.subscriptions.push(
+    watcher,
+    watcher.onDidCreate((uri) => {
+      logger.debug(`index: file created ${uri.fsPath}`);
+      void INDEX.refresh(uri);
+    }),
+    watcher.onDidChange((uri) => {
+      logger.debug(`index: file changed ${uri.fsPath}`);
+      void INDEX.refresh(uri);
+    }),
+    watcher.onDidDelete((uri) => {
+      logger.debug(`index: file deleted ${uri.fsPath}`);
+      INDEX.remove(uri);
+    }),
     vscode.workspace.onDidSaveTextDocument((d) => {
       if (d.languageId === 'systemverilog') {
-        logger.debug(`invalidate index cache for ${d.uri.fsPath}`);
-        INDEX.invalidate(d.uri);
+        logger.debug(`index: refresh after save ${d.uri.fsPath}`);
+        void INDEX.refresh(d.uri);
       }
     }),
     vscode.workspace.onDidCloseTextDocument((d) => {
@@ -46,8 +61,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
-      logger.info('workspace folders changed, resetting index');
+      logger.info('workspace folders changed, rebuilding index');
       initIndex();
+      INDEX.start();
     })
   );
   logger.info('SystemVerilog extension ready');

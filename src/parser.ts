@@ -94,6 +94,149 @@ export function cleanComment(text: string): string {
   });
 }
 
+// Replace the characters of comments and string literals with spaces while
+// preserving the length and line breaks of `text`, so offsets stay valid for a
+// token scan that must ignore commented-out code.
+export function maskComments(text: string): string {
+  const chars = text.split('');
+  const n = text.length;
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) {
+      if (chars[k] !== '\n' && chars[k] !== '\r') {
+        chars[k] = ' ';
+      }
+    }
+  };
+  let state: 'code' | 'line' | 'block' | 'string' = 'code';
+  let start = 0;
+  let i = 0;
+  while (i < n) {
+    const c = text[i];
+    const nxt = i + 1 < n ? text[i + 1] : '';
+    if (state === 'code') {
+      if (c === '/' && nxt === '/') {
+        state = 'line';
+        start = i;
+        i += 2;
+        continue;
+      }
+      if (c === '/' && nxt === '*') {
+        state = 'block';
+        start = i;
+        i += 2;
+        continue;
+      }
+      if (c === '"') {
+        state = 'string';
+        start = i;
+        i += 1;
+        continue;
+      }
+    } else if (state === 'line') {
+      if (c === '\n') {
+        blank(start, i);
+        state = 'code';
+      }
+    } else if (state === 'block') {
+      if (c === '*' && nxt === '/') {
+        blank(start, i + 2);
+        state = 'code';
+        i += 2;
+        continue;
+      }
+    } else if (state === 'string') {
+      if (c === '\\') {
+        i += 2;
+        continue;
+      }
+      if (c === '"') {
+        blank(start, i + 1);
+        state = 'code';
+      }
+    }
+    i += 1;
+  }
+  if (state !== 'code') {
+    blank(start, n);
+  }
+  return chars.join('');
+}
+
+// Name of the innermost class whose body contains `offset`, or null. Forward
+// declarations (`typedef class Foo;`) are ignored.
+export function enclosingClassName(text: string, offset: number): string | null {
+  const masked = maskComments(text);
+  const re = /\bclass\s+([A-Za-z_]\w*)|\bendclass\b/g;
+  const stack: { name: string; start: number }[] = [];
+  const spans: { name: string; start: number; end: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(masked)) !== null) {
+    if (m[1]) {
+      const prefix = masked.slice(0, m.index);
+      if (/\btypedef\s*$/.test(prefix)) {
+        continue;
+      }
+      stack.push({ name: m[1], start: m.index });
+    } else if (stack.length) {
+      const open = stack.pop()!;
+      spans.push({ name: open.name, start: open.start, end: m.index + m[0].length });
+    }
+  }
+  while (stack.length) {
+    const open = stack.pop()!;
+    spans.push({ name: open.name, start: open.start, end: text.length });
+  }
+  let best: { name: string; start: number; end: number } | null = null;
+  for (const s of spans) {
+    if (offset >= s.start && offset <= s.end && (!best || s.start > best.start)) {
+      best = s;
+    }
+  }
+  return best ? best.name : null;
+}
+
+// Class whose scope contains `offset`. Handles both a normal class body and an
+// out-of-body method definition (`function void Class::method(...)...endfunction`),
+// which is the common UVM style where the body lives after `endclass`.
+export function enclosingClassScope(text: string, offset: number): string | null {
+  const inClass = enclosingClassName(text, offset);
+  if (inClass) {
+    return inClass;
+  }
+  const masked = maskComments(text);
+  const re = /\b(function|task|endfunction|endtask)\b/g;
+  const stack: { kind: string; className: string | null; start: number }[] = [];
+  const spans: { name: string; start: number; end: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(masked)) !== null) {
+    const kw = m[1];
+    if (kw === 'function' || kw === 'task') {
+      const semi = masked.indexOf(';', m.index);
+      const header = masked.slice(m.index, semi < 0 ? masked.length : semi);
+      const cm = header.match(/\b([A-Za-z_]\w*)\s*::\s*\w+\s*\(/);
+      stack.push({ kind: kw, className: cm ? cm[1] : null, start: m.index });
+    } else {
+      const want = kw === 'endfunction' ? 'function' : 'task';
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].kind === want) {
+          const open = stack.splice(i, 1)[0];
+          if (open.className) {
+            spans.push({ name: open.className, start: open.start, end: m.index + m[0].length });
+          }
+          break;
+        }
+      }
+    }
+  }
+  let best: { name: string; start: number; end: number } | null = null;
+  for (const s of spans) {
+    if (offset >= s.start && offset <= s.end && (!best || s.start > best.start)) {
+      best = s;
+    }
+  }
+  return best ? best.name : null;
+}
+
 // Python m.groups()[i] === JS match[i + 1]
 function pg(m: RegExpMatchArray, i: number): string | null {
   const v = m[i + 1];
@@ -719,7 +862,7 @@ export function parseClass(flines: string, cname = '\\w+'): ClassInfo | null {
   const reStr =
     '(?<type>class)\\s+(?<name>' +
     cname +
-    ')\\s*(#\\s*\\((?<param>[\\s\\S]*?)\\))?\\s*(extends\\s+(?<extend>\\w+(?:\\s*#\\([\\s\\S]*?\\))?))?\\s*;(?<content>[\\s\\S]*?)(?<ending>endclass)';
+    ')\\s*(#\\s*\\((?<param>[\\s\\S]*?)\\))?\\s*(extends\\s+(?<extend>\\w+(?:::\\w+)*(?:\\s*#\\([\\s\\S]*?\\))?))?\\s*;(?<content>[\\s\\S]*?)(?<ending>endclass)';
   const m = flines.match(new RegExp(reStr, 's'));
   if (m === null) {
     return null;
@@ -746,7 +889,7 @@ export function getAllFunction(txt: string, funcname = '\\w+'): FuncInfo[] {
   const names: string[] = [];
   let fl: (string | null)[][] = [];
   let reStr =
-    'extern\\s+(?:\\b(protected|local)\\s+)?(\\b(?:virtual|static)\\s+)?\\b(function|task)\\s+((?:\\w+\\s+)?(?:\\w+\\s+|\\[[\\d:]+\\]\\s+)?)\\b(' +
+    'extern\\s+()(?:\\b(protected|local)\\s+)?(\\b(?:virtual|static)\\s+)?\\b(function|task)\\s+((?:\\w+\\s+)?(?:\\w+\\s+|\\[[\\d:]+\\]\\s+)?)\\b(' +
     funcname +
     ')\\b\\s*(\\((.*?)\\s*\\))?\\s*;()';
   fl = fl.concat(findAll(new RegExp(reStr, 'gsm'), txt));

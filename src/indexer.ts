@@ -27,8 +27,15 @@ interface FileRecord {
   symbols: SymbolEntry[];
 }
 
+// Workspace-wide symbol index. The symbol table (`byName`) is built once in the
+// background and kept resident, so navigation lookups are O(1) map reads instead
+// of re-globbing and re-stat'ing every file on each command. File texts are
+// cached by mtime and refreshed on save or on filesystem changes.
 export class WorkspaceIndex {
   private records = new Map<string, FileRecord>();
+  private byName = new Map<string, SymbolEntry[]>();
+  private allFiles: vscode.Uri[] = [];
+  private ready: Promise<void> | null = null;
 
   private async stat(uri: vscode.Uri): Promise<number> {
     try {
@@ -57,8 +64,113 @@ export class WorkspaceIndex {
     return text;
   }
 
+  // Drop the cached file text. Symbols stay valid (they describe the on-disk
+  // content) and the text is re-read on demand.
   invalidate(uri: vscode.Uri): void {
     this.records.delete(uri.toString());
+  }
+
+  // Remove every symbol entry that points at `uri`.
+  private dropSymbols(uri: vscode.Uri): void {
+    const key = uri.toString();
+    for (const [name, entries] of this.byName) {
+      const kept = entries.filter((e) => e.uri.toString() !== key);
+      if (kept.length) {
+        this.byName.set(name, kept);
+      } else {
+        this.byName.delete(name);
+      }
+    }
+  }
+
+  private addSymbols(symbols: SymbolEntry[]): void {
+    for (const s of symbols) {
+      const list = this.byName.get(s.name);
+      if (list) {
+        list.push(s);
+      } else {
+        this.byName.set(s.name, [s]);
+      }
+    }
+  }
+
+  // Re-scan a single file's symbols and update the table.
+  private indexText(uri: vscode.Uri, text: string): SymbolEntry[] {
+    this.dropSymbols(uri);
+    const symbols = this.scanSymbols(uri, text);
+    this.addSymbols(symbols);
+    return symbols;
+  }
+
+  private globFiles(): Thenable<vscode.Uri[]> {
+    return vscode.workspace.findFiles('**/*.{v,sv,vh,svh}', '**/{node_modules,.git,out}/**');
+  }
+
+  // Build the index on first use; subsequent calls resolve immediately.
+  async ensureIndex(): Promise<void> {
+    if (!this.ready) {
+      this.ready = this.buildIndex();
+    }
+    return this.ready;
+  }
+
+  // Kick off indexing without blocking the caller (used at activation).
+  start(): void {
+    void this.ensureIndex().catch((e) => logger.warn(`index build failed: ${e}`));
+  }
+
+  // Drop everything and rebuild (e.g. workspace folders changed).
+  rebuild(): Promise<void> {
+    this.records.clear();
+    this.byName.clear();
+    this.allFiles = [];
+    this.ready = this.buildIndex();
+    return this.ready;
+  }
+
+  private async buildIndex(): Promise<void> {
+    const t0 = Date.now();
+    const files = await this.globFiles();
+    this.allFiles = files;
+    this.byName.clear();
+    this.records.clear();
+    for (const uri of files) {
+      try {
+        const data = await vscode.workspace.fs.readFile(uri);
+        const text = Buffer.from(data).toString('utf8');
+        const mtime = await this.stat(uri);
+        const symbols = this.scanSymbols(uri, text);
+        this.addSymbols(symbols);
+        this.records.set(uri.toString(), { mtime, text, symbols });
+      } catch {
+        // File may have been removed while scanning; skip it.
+      }
+    }
+    logger.info(`index built: ${files.length} file(s) in ${Date.now() - t0} ms`);
+  }
+
+  // Re-read a single file from disk and update its symbols.
+  async refresh(uri: vscode.Uri): Promise<void> {
+    const key = uri.toString();
+    try {
+      const data = await vscode.workspace.fs.readFile(uri);
+      const text = Buffer.from(data).toString('utf8');
+      const mtime = await this.stat(uri);
+      const symbols = this.indexText(uri, text);
+      this.records.set(key, { mtime, text, symbols });
+      if (!this.allFiles.some((u) => u.toString() === key)) {
+        this.allFiles.push(uri);
+      }
+    } catch {
+      this.remove(uri);
+    }
+  }
+
+  remove(uri: vscode.Uri): void {
+    const key = uri.toString();
+    this.records.delete(key);
+    this.dropSymbols(uri);
+    this.allFiles = this.allFiles.filter((u) => u.toString() !== key);
   }
 
   private scanSymbols(uri: vscode.Uri, text: string): SymbolEntry[] {
@@ -72,7 +184,7 @@ export class WorkspaceIndex {
     };
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
-      let m = l.match(/^[ \t]*(module|interface)\s+(\w+)/);
+      let m = l.match(/^[ \t]*(module|interface)\s+(?!class\b)(\w+)/);
       if (m) {
         add(m[2], m[1] as SymbolKind, i);
         continue;
@@ -82,7 +194,9 @@ export class WorkspaceIndex {
         add(m[1], 'package', i);
         continue;
       }
-      m = l.match(/^[ \t]*class\s+(\w+)/);
+      m = l.match(
+        /^[ \t]*(?:virtual\s+|local\s+|protected\s+|static\s+|pure\s+|interface\s+)*class\s+(\w+)/
+      );
       if (m) {
         add(m[1], 'class', i);
         continue;
@@ -108,6 +222,7 @@ export class WorkspaceIndex {
   }
 
   async getAllFiles(includeHeaders = true): Promise<vscode.Uri[]> {
+    await this.ensureIndex();
     const cfg = getConfig();
     const exts = new Set<string>();
     for (const e of cfg.vExt) {
@@ -124,41 +239,33 @@ export class WorkspaceIndex {
         exts.add(e);
       }
     }
-    const all = await vscode.workspace.findFiles('**/*.{v,sv,vh,svh}', '**/{node_modules,.git,out}/**');
-    const filtered = all.filter((u) => exts.has(path.extname(u.fsPath).slice(1).toLowerCase()));
+    const filtered = this.allFiles.filter((u) => exts.has(path.extname(u.fsPath).slice(1).toLowerCase()));
     logger.debug(`index: ${filtered.length} file(s) matched (headers=${includeHeaders})`);
     return filtered;
   }
 
   async getSymbols(uri: vscode.Uri): Promise<SymbolEntry[]> {
+    await this.ensureIndex();
     const key = uri.toString();
-    const mtime = await this.stat(uri);
     const rec = this.records.get(key);
-    if (rec && rec.mtime === mtime && rec.symbols.length) {
+    if (rec) {
       return rec.symbols;
     }
     const text = await this.readFile(uri);
-    const symbols = this.scanSymbols(uri, text);
-    const r = this.records.get(key);
-    if (r) {
-      r.symbols = symbols;
-    } else {
-      this.records.set(key, { mtime, text, symbols });
-    }
+    const symbols = this.indexText(uri, text);
+    const mtime = await this.stat(uri);
+    this.records.set(key, { mtime, text, symbols });
     return symbols;
   }
 
   async findSymbols(name: string, kinds?: SymbolKind[]): Promise<SymbolEntry[]> {
-    const files = await this.getAllFiles();
-    const out: SymbolEntry[] = [];
-    for (const uri of files) {
-      const syms = await this.getSymbols(uri);
-      for (const s of syms) {
-        if (s.name === name && (!kinds || kinds.includes(s.kind))) {
-          out.push(s);
-        }
-      }
+    await this.ensureIndex();
+    const entries = this.byName.get(name);
+    if (!entries || !entries.length) {
+      logger.debug(`findSymbols "${name}": 0 match(es)`);
+      return [];
     }
+    const out = kinds ? entries.filter((e) => kinds.includes(e.kind)) : entries.slice();
     // Prefer the current file first
     const active = vscode.window.activeTextEditor?.document.uri.toString();
     if (active) {
@@ -204,6 +311,26 @@ export class WorkspaceIndex {
       }
     }
     return null;
+  }
+
+  // Walk the `extends` chain of a class, returning [derived, base, ...]. Cross-file
+  // and cycle-safe. Each entry carries the file that declares it so callers can
+  // link back to the class body.
+  async classHierarchy(name: string): Promise<{ info: ClassInfo; uri: vscode.Uri }[]> {
+    const out: { info: ClassInfo; uri: vscode.Uri }[] = [];
+    const seen = new Set<string>();
+    let current: string | null = name;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const found = await this.lookupClass(current);
+      if (!found) {
+        break;
+      }
+      out.push({ info: found.info, uri: found.uri });
+      const base = found.info.extend;
+      current = base ? base.split(/\s+/)[0].split('#')[0] : null;
+    }
+    return out;
   }
 
   async listModuleFiles(): Promise<vscode.Uri[]> {

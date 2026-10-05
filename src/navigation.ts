@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { TypeInfo, getAllTypeInfo, getTypeInfo, cleanComment, parseModule } from './parser';
 import { INDEX, getWordAt } from './indexer';
-import { findDeclarationLine, findDriver, typeInfo } from './lookup';
+import { findDeclarationLine, findDriver, memberDeclaration, typeInfo } from './lookup';
 import { getConfig } from './config';
 import * as logger from './logger';
 
@@ -45,6 +45,14 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
       logger.command('systemverilog.gotoModule', (arg?: unknown) => gotoModule(arg))
     ),
     vscode.commands.registerCommand(
+      'systemverilog.gotoClass',
+      logger.command('systemverilog.gotoClass', (arg?: unknown) => gotoClass(arg))
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoMember',
+      logger.command('systemverilog.gotoMember', (arg?: unknown) => gotoMember(arg))
+    ),
+    vscode.commands.registerCommand(
       'systemverilog.gotoPortReference',
       logger.command('systemverilog.gotoPortReference', (arg?: unknown) => gotoPortSignal(arg, 'reference'))
     ),
@@ -75,7 +83,7 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
         if (!word) {
           return undefined;
         }
-        const md = await buildHover(document, word);
+        const md = await buildHover(document, word, position);
         if (!md) {
           return undefined;
         }
@@ -91,7 +99,11 @@ function commandLink(label: string, command: string, arg: unknown): string {
 
 // Build the hover markdown, including a clickable link to the module definition
 // when hovering an instantiation (its instance name or its module type).
-async function buildHover(document: vscode.TextDocument, word: string): Promise<vscode.MarkdownString | undefined> {
+async function buildHover(
+  document: vscode.TextDocument,
+  word: string,
+  position: vscode.Position
+): Promise<vscode.MarkdownString | undefined> {
   // 1) The word is a module / interface defined somewhere in the workspace.
   const modSyms = await INDEX.findSymbols(word, ['module', 'interface']);
   if (modSyms.length) {
@@ -99,6 +111,17 @@ async function buildHover(document: vscode.TextDocument, word: string): Promise<
     md.isTrusted = true;
     md.appendMarkdown(commandLink('Go to module definition of `' + word + '`', 'systemverilog.gotoModule', { name: word }));
     md.appendMarkdown(`\n\n_${vscode.workspace.asRelativePath(modSyms[0].uri)}_`);
+    return md;
+  }
+
+  // 1b) The word is a class defined somewhere in the workspace (e.g. the base
+  // class in `extends Base`).
+  const classSyms = await INDEX.findSymbols(word, ['class']);
+  if (classSyms.length) {
+    const md = new vscode.MarkdownString();
+    md.isTrusted = true;
+    md.appendMarkdown('**class** `' + word + '`');
+    md.appendMarkdown('\n\n' + classDefinitionLink(word, classSyms[0].uri));
     return md;
   }
 
@@ -138,14 +161,72 @@ async function buildHover(document: vscode.TextDocument, word: string): Promise<
     return md;
   }
 
-  // 3) Plain signal / member.
-  if (!ti || !ti.type) {
-    return undefined;
+  // 3) A class member (variable, function or task), possibly inherited from a
+  // base class in another file. For a variable, link to the definition of its
+  // type (class / interface); for a function or task, link to its own body.
+  const decl = await memberDeclaration(document, position, word);
+  if (decl) {
+    const md = new vscode.MarkdownString();
+    md.isTrusted = true;
+    md.appendMarkdown(formatTypeInfo(decl.member));
+    const memberType = !decl.isFunction && decl.member.type ? decl.member.type.split(/\s+/)[0] : '';
+    const typeLink = memberType ? await typeDefinitionLink(memberType) : null;
+    if (typeLink) {
+      md.appendMarkdown('\n\n' + typeLink);
+    } else {
+      md.appendMarkdown('\n\n' + memberDefinitionLink(word, decl.ownerUri, decl.line));
+    }
+    return md;
   }
-  const md = new vscode.MarkdownString();
-  md.isTrusted = true;
-  md.appendMarkdown(formatTypeInfo(ti));
-  return md;
+
+  // 4) A plain signal whose type is a class / interface: link its definition.
+  if (ti && ti.type) {
+    const md = new vscode.MarkdownString();
+    md.isTrusted = true;
+    md.appendMarkdown(formatTypeInfo(ti));
+    const typeLink = await typeDefinitionLink(ti.type.split(/\s+/)[0]);
+    if (typeLink) {
+      md.appendMarkdown('\n\n' + typeLink);
+    }
+    return md;
+  }
+
+  return undefined;
+}
+
+// Link to the definition of a user defined type: a class, interface or module.
+async function typeDefinitionLink(typeName: string): Promise<string | null> {
+  if (!typeName) {
+    return null;
+  }
+  const cls = await INDEX.lookupClass(typeName);
+  if (cls) {
+    return classDefinitionLink(typeName, cls.uri);
+  }
+  const syms = await INDEX.findSymbols(typeName, ['module', 'interface']);
+  if (syms.length) {
+    return (
+      commandLink('Go to definition of `' + typeName + '`', 'systemverilog.gotoModule', { name: typeName }) +
+      `\n\n_${vscode.workspace.asRelativePath(syms[0].uri)}_`
+    );
+  }
+  return null;
+}
+
+function memberDefinitionLink(name: string, uri: vscode.Uri, line: number): string {
+  return (
+    commandLink('Go to definition of `' + name + '`', 'systemverilog.gotoMember', {
+      uri: uri.toString(),
+      line,
+    }) + `\n\n_${vscode.workspace.asRelativePath(uri)}_`
+  );
+}
+
+function classDefinitionLink(name: string, uri: vscode.Uri): string {
+  return (
+    commandLink('Go to class definition of `' + name + '`', 'systemverilog.gotoClass', { name }) +
+    `\n\n_${vscode.workspace.asRelativePath(uri)}_`
+  );
 }
 
 async function gotoModule(arg?: unknown): Promise<void> {
@@ -169,6 +250,48 @@ async function gotoModule(arg?: unknown): Promise<void> {
   const doc = await vscode.workspace.openTextDocument(target.uri);
   const ed = await vscode.window.showTextDocument(doc);
   const pos = new vscode.Position(target.line, 0);
+  ed.selection = new vscode.Selection(pos, pos);
+  ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+}
+
+async function gotoClass(arg?: unknown): Promise<void> {
+  let name: string | undefined;
+  if (typeof arg === 'string') {
+    name = arg;
+  } else if (arg && typeof arg === 'object' && typeof (arg as { name?: string }).name === 'string') {
+    name = (arg as { name: string }).name;
+  }
+  if (!name) {
+    return;
+  }
+  const syms = await INDEX.findSymbols(name, ['class']);
+  if (!syms.length) {
+    logger.debug(`gotoClass "${name}": not found`);
+    vscode.window.showInformationMessage('Class not found: ' + name);
+    return;
+  }
+  const target = syms[0];
+  logger.info(`gotoClass "${name}" -> ${vscode.workspace.asRelativePath(target.uri)}:${target.line + 1}`);
+  const doc = await vscode.workspace.openTextDocument(target.uri);
+  const ed = await vscode.window.showTextDocument(doc);
+  const pos = new vscode.Position(target.line, 0);
+  ed.selection = new vscode.Selection(pos, pos);
+  ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+}
+
+async function gotoMember(arg?: unknown): Promise<void> {
+  if (!arg || typeof arg !== 'object') {
+    return;
+  }
+  const a = arg as { uri?: unknown; line?: unknown };
+  if (typeof a.uri !== 'string' || typeof a.line !== 'number') {
+    return;
+  }
+  const uri = vscode.Uri.parse(a.uri);
+  logger.info(`gotoMember -> ${vscode.workspace.asRelativePath(uri)}:${a.line + 1}`);
+  const doc = await vscode.workspace.openTextDocument(uri);
+  const ed = await vscode.window.showTextDocument(doc);
+  const pos = new vscode.Position(Math.max(0, a.line), 0);
   ed.selection = new vscode.Selection(pos, pos);
   ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
 }
@@ -388,11 +511,11 @@ function parsePortNavArg(arg: unknown): PortNavArgument | null {
 }
 
 // Jump inside the instantiated module: to the first use of an input/inout port,
-// or to the driver of an output port.
-async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promise<void> {
+// or to the driver of an output port. Returns true when a jump was performed.
+async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promise<boolean> {
   const a = parsePortNavArg(arg);
   if (!a || !a.port) {
-    return;
+    return false;
   }
   let moduleName = a.module;
   if (!moduleName) {
@@ -403,7 +526,7 @@ async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promi
     }
   }
   if (!moduleName) {
-    return;
+    return false;
   }
   const syms = await INDEX.findSymbols(moduleName, ['module', 'interface']);
   for (const s of syms) {
@@ -416,7 +539,8 @@ async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promi
     if (kind === 'driver') {
       offset = findDriverAt(text, a.port, range);
       if (offset === null) {
-        offset = await findSubmoduleDriverAt(text, a.port, range);
+        const sd = await findSubmoduleDriverAt(text, a.port, range);
+        offset = sd ? sd.offset : null;
       }
     } else {
       offset = findFirstUseAt(text, a.port, range);
@@ -426,11 +550,36 @@ async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promi
         `gotoPort ${kind} "${a.port}" in ${moduleName} -> ${vscode.workspace.asRelativePath(s.uri)}`
       );
       await openAt(s.uri, offset);
-      return;
+      return true;
     }
   }
   logger.debug(`gotoPort ${kind} "${a.port}": not found in ${moduleName}`);
   vscode.window.showInformationMessage(`No ${kind} of "${a.port}" found in ${moduleName}`);
+  return false;
+}
+
+interface SubmoduleDriver {
+  offset: number;
+  moduleType: string;
+  port: string;
+}
+
+// Find, in the current document, an instance port that drives `signal` (an
+// output/inout of a submodule bound to `signal`) and resolve it through the index.
+async function resolveSubmoduleDriver(
+  document: vscode.TextDocument,
+  signal: string
+): Promise<SubmoduleDriver | null> {
+  const text = document.getText();
+  const mi = parseModule(cleanComment(text), '\\w+', false, false);
+  if (!mi) {
+    return null;
+  }
+  const range = findModuleRange(text, mi.name);
+  if (!range) {
+    return null;
+  }
+  return findSubmoduleDriverAt(text, signal, range);
 }
 
 async function openAt(uri: vscode.Uri, offset: number): Promise<void> {
@@ -439,6 +588,12 @@ async function openAt(uri: vscode.Uri, offset: number): Promise<void> {
   const pos = doc.positionAt(offset);
   ed.selection = new vscode.Selection(pos, pos);
   ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+}
+
+function goToLine(editor: vscode.TextEditor, line: number, character: number): void {
+  const pos = new vscode.Position(line, character);
+  editor.selection = new vscode.Selection(pos, pos);
+  editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
 }
 
 interface TextSpan {
@@ -586,7 +741,11 @@ function findDriverAt(text: string, signal: string, range: TextSpan): number | n
 
 // Location where `signal` is driven by being connected to an output of a
 // submodule instance (including instances inside a generate block).
-async function findSubmoduleDriverAt(text: string, signal: string, range: TextSpan): Promise<number | null> {
+async function findSubmoduleDriverAt(
+  text: string,
+  signal: string,
+  range: TextSpan
+): Promise<SubmoduleDriver | null> {
   const body = text.slice(range.bodyStart, range.end);
   const base = range.bodyStart;
   const spans = commentSpans(text);
@@ -625,7 +784,7 @@ async function findSubmoduleDriverAt(text: string, signal: string, range: TextSp
       dirCache.set(key, dir);
     }
     if (dir === 'output' || dir === 'inout') {
-      return off;
+      return { offset: off, moduleType, port: portName };
     }
   }
   return null;
@@ -734,31 +893,37 @@ async function gotoDeclaration(): Promise<void> {
   if (!word) {
     return;
   }
-  // Search project symbols first (module/interface/package/class/function/task/typedef/macro).
+  // Fast path: a declaration in the active buffer. This runs a synchronous regex
+  // over the in-memory text, so it also sees unsaved edits.
+  const text = editor.document.getText();
+  const local = findDeclarationLine(text, word, true);
+  if (local >= 0) {
+    logger.info(`gotoDeclaration "${word}" -> line ${local + 1} (current file)`);
+    goToLine(editor, local, 0);
+    return;
+  }
+  // Workspace-level definition (resident index, O(1) lookup).
   const syms = await INDEX.findSymbols(word);
   if (syms.length) {
     const target = syms[0];
     logger.info(`gotoDeclaration "${word}" -> ${target.kind} at ${vscode.workspace.asRelativePath(target.uri)}:${target.line + 1}`);
     const doc = await vscode.workspace.openTextDocument(target.uri);
     const ed = await vscode.window.showTextDocument(doc);
-    const pos = new vscode.Position(target.line, 0);
-    ed.selection = new vscode.Selection(pos, pos);
-    ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+    goToLine(ed, target.line, 0);
     return;
   }
-  const line = findDeclarationLine(editor.document.getText(), word);
+  // Fallback: first occurrence of the name in the current file.
+  const line = findDeclarationLine(text, word);
   if (line >= 0) {
-    logger.info(`gotoDeclaration "${word}" -> line ${line + 1} (current file)`);
-    const pos = new vscode.Position(line, 0);
-    editor.selection = new vscode.Selection(pos, pos);
-    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-  } else {
-    logger.debug(`gotoDeclaration "${word}": not found`);
-    vscode.window.showInformationMessage('Declaration not found for "' + word + '"');
+    logger.info(`gotoDeclaration "${word}" -> line ${line + 1} (current file, weak)`);
+    goToLine(editor, line, 0);
+    return;
   }
+  logger.debug(`gotoDeclaration "${word}": not found`);
+  vscode.window.showInformationMessage('Declaration not found for "' + word + '"');
 }
 
-function gotoDriver(): void {
+async function gotoDriver(): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
     return;
@@ -768,15 +933,27 @@ function gotoDriver(): void {
     return;
   }
   const res = findDriver(editor.document.getText(), word);
+  if (res && res.detail !== 'submodule output') {
+    logger.info(`gotoDriver "${word}" -> ${res.detail} at line ${res.line + 1}`);
+    goToLine(editor, res.line, Math.max(0, res.character));
+    return;
+  }
+  // The signal is connected to a submodule port: jump into that module and follow
+  // the port to its driver (cross-file).
+  const sd = await resolveSubmoduleDriver(editor.document, word);
+  if (sd) {
+    const jumped = await gotoPortSignal({ module: sd.moduleType, port: sd.port }, 'driver');
+    if (jumped) {
+      return;
+    }
+  }
   if (res) {
     logger.info(`gotoDriver "${word}" -> ${res.detail} at line ${res.line + 1}`);
-    const pos = new vscode.Position(res.line, Math.max(0, res.character));
-    editor.selection = new vscode.Selection(pos, pos);
-    editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
-  } else {
-    logger.debug(`gotoDriver "${word}": no driver found`);
-    vscode.window.showInformationMessage('Driver not found for "' + word + '"');
+    goToLine(editor, res.line, Math.max(0, res.character));
+    return;
   }
+  logger.debug(`gotoDriver "${word}": no driver found`);
+  vscode.window.showInformationMessage('Driver not found for "' + word + '"');
 }
 
 async function showHierarchy(): Promise<void> {
