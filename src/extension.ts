@@ -4,6 +4,7 @@ import { registerCompletion } from './completion';
 import { registerInstantiation } from './instantiation';
 import { registerLint } from './lint';
 import { registerNavigation } from './navigation';
+import { registerSymbols } from './symbols';
 import { INDEX, initIndex } from './indexer';
 import { insertFsmTemplate } from './fsm';
 import * as logger from './logger';
@@ -14,6 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
   initIndex();
 
   registerNavigation(context);
+  registerSymbols(context);
   registerCompletion(context);
   registerAlignment(context);
   registerInstantiation(context);

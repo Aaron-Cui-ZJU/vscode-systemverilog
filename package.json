@@ -111,6 +111,11 @@
         "category": "Verilog"
       },
       {
+        "command": "systemverilog.showInstances",
+        "title": "Verilog: Show Module Instances",
+        "category": "Verilog"
+      },
+      {
         "command": "systemverilog.findUnusedSignals",
         "title": "Verilog: Find Unused Signals",
         "category": "Verilog"
@@ -184,6 +189,11 @@
           "command": "systemverilog.showType",
           "when": "editorLangId == systemverilog",
           "group": "navigation@12"
+        },
+        {
+          "command": "systemverilog.showInstances",
+          "when": "editorLangId == systemverilog",
+          "group": "navigation@13"
         },
         {
           "command": "systemverilog.instantiateModule",
