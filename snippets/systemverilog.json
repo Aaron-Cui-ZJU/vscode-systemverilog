@@ -1,0 +1,158 @@
+{
+  "Module": {
+    "prefix": "module",
+    "body": [
+      "module ${1:${TM_FILENAME_BASE}} (",
+      "\tinput ${2:clk},    // Clock",
+      "\tinput ${3:clk_en}, // Clock Enable",
+      "\tinput ${4:rst_n},  // Asynchronous reset active low",
+      "\t${0}",
+      ");",
+      "",
+      "endmodule"
+    ],
+    "description": "Module declaration"
+  },
+  "Interface": {
+    "prefix": "interface",
+    "body": [
+      "interface ${1:${TM_FILENAME_BASE}} ();",
+      "",
+      "\t${0}",
+      "",
+      "endinterface"
+    ],
+    "description": "Interface declaration"
+  },
+  "Package": {
+    "prefix": "package",
+    "body": [
+      "package ${1:${TM_FILENAME_BASE}};",
+      "",
+      "\t${0}",
+      "",
+      "endpackage"
+    ],
+    "description": "Package declaration"
+  },
+  "Class": {
+    "prefix": "class",
+    "body": [
+      "class ${1:${TM_FILENAME_BASE}} extends ${2: /* base class*/};",
+      "",
+      "\t${0}",
+      "",
+      "endclass : ${1}"
+    ],
+    "description": "Class declaration"
+  },
+  "UVM Class": {
+    "prefix": "uvmclass",
+    "body": [
+      "class ${1:${TM_FILENAME_BASE}} extends ${2: /* base class*/};",
+      "",
+      "/*-------------------------------------------------------------------------------",
+      "-- Interface, port, fields",
+      "-------------------------------------------------------------------------------*/",
+      "\t${0}",
+      "",
+      "/*-------------------------------------------------------------------------------",
+      "-- UVM Factory register",
+      "-------------------------------------------------------------------------------*/",
+      "\t// Provide implementations of virtual methods such as get_type_name and create",
+      "\t`uvm_component_utils(${1})",
+      "",
+      "/*-------------------------------------------------------------------------------",
+      "-- Functions",
+      "-------------------------------------------------------------------------------*/",
+      "\t// Constructor",
+      "\tfunction new(string name = \"${1}\", uvm_component parent=null);",
+      "\t\tsuper.new(name, parent);",
+      "\tendfunction : new",
+      "",
+      "endclass : ${1}"
+    ],
+    "description": "UVM class declaration"
+  },
+  "Case": {
+    "prefix": "case",
+    "body": [
+      "case (${1:/* switch */})",
+      "",
+      "\tdefault : ${0:/* default */};",
+      "endcase"
+    ],
+    "description": "Case statement"
+  },
+  "Constraint": {
+    "prefix": "constraint",
+    "body": [
+      "constraint ${1:c} {",
+      "\t${0}",
+      "}"
+    ],
+    "description": "Constraint declaration"
+  },
+  "Covergroup": {
+    "prefix": "covergroup",
+    "body": [
+      "covergroup ${1:cg}();",
+      "\t${0}",
+      "endgroup : ${1:cg}"
+    ],
+    "description": "Covergroup declaration"
+  },
+  "Function": {
+    "prefix": "function",
+    "body": [
+      "function ${1:void} ${2}($3);",
+      "\t$0",
+      "endfunction : ${2}"
+    ],
+    "description": "Function declaration"
+  },
+  "Task": {
+    "prefix": "task",
+    "body": [
+      "task ${1}($2);",
+      "\t$0",
+      "endtask : ${1}"
+    ],
+    "description": "Task declaration"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "for (int ${2:i} = 0; $2 < ${1:count}; ${3:$2++}) begin",
+      "\t${0:/* code */}",
+      "end"
+    ],
+    "description": "For loop"
+  },
+  "If Condition": {
+    "prefix": "if",
+    "body": [
+      "if (${1:/* condition */}) begin",
+      "\t${0:/* code */}",
+      "end"
+    ],
+    "description": "If statement"
+  },
+  "Begin End": {
+    "prefix": "beg",
+    "body": [
+      "begin ${0:: }",
+      "end"
+    ],
+    "description": "begin .. end"
+  },
+  "Comment Box": {
+    "prefix": "///",
+    "body": [
+      "/*------------------------------------------------------------------------------",
+      "--  ${0}",
+      "------------------------------------------------------------------------------*/"
+    ],
+    "description": "Comment box"
+  }
+}

@@ -1,0 +1,540 @@
+{
+  "name": "systemverilog",
+  "displayName": "SystemVerilog",
+  "description": "SystemVerilog and Verilog language support: highlighting, navigation, completion, alignment, instantiation and linting. Port of the Sublime Text SystemVerilog plugin.",
+  "version": "1.0.0",
+  "publisher": "sv-vscode",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "verilog",
+    "systemverilog",
+    "hdl",
+    "uvm",
+    "asic",
+    "fpga"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:systemverilog",
+    "onCommand:systemverilog.showType",
+    "onCommand:systemverilog.instantiateModule",
+    "onCommand:systemverilog.align",
+    "onCommand:systemverilog.reindent",
+    "onCommand:systemverilog.toggleDotStar",
+    "onCommand:systemverilog.gotoDriver",
+    "onCommand:systemverilog.gotoDeclaration",
+    "onCommand:systemverilog.insertFsmTemplate",
+    "onCommand:systemverilog.showHierarchy",
+    "onCommand:systemverilog.findInstance",
+    "onCommand:systemverilog.findUnusedSignals",
+    "onCommand:systemverilog.lint"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "systemverilog",
+        "aliases": [
+          "SystemVerilog",
+          "Verilog",
+          "systemverilog",
+          "verilog"
+        ],
+        "extensions": [
+          ".v",
+          ".vh",
+          ".sv",
+          ".svh"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "systemverilog",
+        "scopeName": "source.systemverilog",
+        "path": "./syntaxes/systemverilog.tmLanguage"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "systemverilog",
+        "path": "./snippets/systemverilog.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "systemverilog.showType",
+        "title": "Verilog: Show Signal/Variable Type",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.instantiateModule",
+        "title": "Verilog: Instantiate Module",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.align",
+        "title": "Verilog: Alignment",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.reindent",
+        "title": "Verilog: Reindent",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.toggleDotStar",
+        "title": "Verilog: Toggle .*",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.gotoDriver",
+        "title": "Verilog: GoTo Driver",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.gotoDeclaration",
+        "title": "Verilog: GoTo Declaration",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.insertFsmTemplate",
+        "title": "Verilog: Insert FSM template",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.showHierarchy",
+        "title": "Verilog: Show Module Hierarchy",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.findInstance",
+        "title": "Verilog: Find Instance",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.findUnusedSignals",
+        "title": "Verilog: Find Unused Signals",
+        "category": "Verilog"
+      },
+      {
+        "command": "systemverilog.lint",
+        "title": "Verilog: Linting",
+        "category": "Verilog"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "systemverilog.showType",
+        "key": "f10",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.instantiateModule",
+        "key": "ctrl+f10",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.toggleDotStar",
+        "key": "ctrl+shift+f10",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.align",
+        "key": "ctrl+shift+a",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.reindent",
+        "key": "alt+shift+a",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.gotoDriver",
+        "key": "ctrl+f12",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.gotoDeclaration",
+        "key": "shift+f12",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.gotoBlockBoundary",
+        "key": "ctrl+m",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      },
+      {
+        "command": "systemverilog.selectBlockBoundary",
+        "key": "ctrl+shift+m",
+        "when": "editorTextFocus && editorLangId == systemverilog"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "systemverilog.gotoDeclaration",
+          "when": "editorLangId == systemverilog",
+          "group": "navigation@10"
+        },
+        {
+          "command": "systemverilog.gotoDriver",
+          "when": "editorLangId == systemverilog",
+          "group": "navigation@11"
+        },
+        {
+          "command": "systemverilog.showType",
+          "when": "editorLangId == systemverilog",
+          "group": "navigation@12"
+        },
+        {
+          "command": "systemverilog.instantiateModule",
+          "when": "editorLangId == systemverilog",
+          "group": "1_modification@10"
+        },
+        {
+          "command": "systemverilog.align",
+          "when": "editorLangId == systemverilog",
+          "group": "1_modification@11"
+        },
+        {
+          "command": "systemverilog.reindent",
+          "when": "editorLangId == systemverilog",
+          "group": "1_modification@12"
+        },
+        {
+          "command": "systemverilog.findUnusedSignals",
+          "when": "editorLangId == systemverilog",
+          "group": "1_modification@13"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SystemVerilog",
+      "properties": {
+        "systemverilog.vExt": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "v"
+          ],
+          "description": "Extensions for Verilog files."
+        },
+        "systemverilog.svExt": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "sv"
+          ],
+          "description": "Extensions for SystemVerilog files."
+        },
+        "systemverilog.vhExt": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "vh"
+          ],
+          "description": "Extensions for Verilog header files."
+        },
+        "systemverilog.svhExt": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "svh"
+          ],
+          "description": "Extensions for SystemVerilog header files."
+        },
+        "systemverilog.tooltip": {
+          "type": "boolean",
+          "default": true,
+          "description": "Display declaration information in a tooltip. When false, the information is shown in the status bar."
+        },
+        "systemverilog.hoverMaxSize": {
+          "type": "number",
+          "default": -1,
+          "description": "Max file size (bytes) to display popup info automatically when hovering a valid symbol. -1 disables the limit, 0 disables the feature."
+        },
+        "systemverilog.tooltipShowModuleOnPort": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include module type and instance when showing tooltip for a port."
+        },
+        "systemverilog.tooltipShowRefs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show references to module/interface."
+        },
+        "systemverilog.tooltipShowSignalLinks": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show links to driver/reference for signals."
+        },
+        "systemverilog.oneBindPerLine": {
+          "type": "boolean",
+          "default": true,
+          "description": "For module instantiation, force only one binding per line."
+        },
+        "systemverilog.oneDeclPerLine": {
+          "type": "boolean",
+          "default": false,
+          "description": "For signal declaration, force only one signal per declaration."
+        },
+        "systemverilog.maxLineLength": {
+          "type": "number",
+          "default": 120,
+          "description": "Split one line into multiple if too long."
+        },
+        "systemverilog.stripEmptyLine": {
+          "type": "boolean",
+          "default": true,
+          "description": "Strip empty line inside module declaration."
+        },
+        "systemverilog.modImportSameLine": {
+          "type": "boolean",
+          "default": false,
+          "description": "When aligning module declaration, put import statement on same line as module."
+        },
+        "systemverilog.alignmentIgnoreTick": {
+          "type": "boolean",
+          "default": false,
+          "description": "Ignore line indentation for every line starting with `ifdef, `elsif ..."
+        },
+        "systemverilog.alignCommaSemicolon": {
+          "type": "boolean",
+          "default": true,
+          "description": "Align comma/semi-colon for signal/port declaration."
+        },
+        "systemverilog.paramPortAlignment": {
+          "type": "boolean",
+          "default": true,
+          "description": "Control if parameters/ports are aligned together."
+        },
+        "systemverilog.indentStyle": {
+          "type": "string",
+          "enum": [
+            "1tbs",
+            "gnu"
+          ],
+          "default": "1tbs",
+          "description": "Indentation style used by autocompletion and beautifier when force is enabled."
+        },
+        "systemverilog.clkName": {
+          "type": "string",
+          "default": "clk",
+          "description": "Default clock name."
+        },
+        "systemverilog.rstName": {
+          "type": "string",
+          "default": "rst",
+          "description": "Default reset active high name."
+        },
+        "systemverilog.rstNName": {
+          "type": "string",
+          "default": "rst_n",
+          "description": "Default reset active low name."
+        },
+        "systemverilog.alwaysNameAuto": {
+          "type": "boolean",
+          "default": true,
+          "description": "Look for existing always block in the file to retrieve name of clk/reset."
+        },
+        "systemverilog.alwaysFfBeginEnd": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enclose the whole always block with begin/end."
+        },
+        "systemverilog.alwaysOneCursor": {
+          "type": "boolean",
+          "default": false,
+          "description": "Simplify the snippet to position the cursor on the first line."
+        },
+        "systemverilog.alwaysLabel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable label for always block (only if begin/end are present)."
+        },
+        "systemverilog.alwaysSvOnly": {
+          "type": "boolean",
+          "default": true,
+          "description": "In .sv file only display completion for always_comb, always_ff or always_latch (no simple always)."
+        },
+        "systemverilog.clkEnName": {
+          "type": "string",
+          "default": "clk_en",
+          "description": "Default clock enable name. Empty string if you do not want a clock enable in the snippet."
+        },
+        "systemverilog.alwaysCeAuto": {
+          "type": "boolean",
+          "default": true,
+          "description": "Insert the clock enable part only if the clk enable signal has been declared."
+        },
+        "systemverilog.endLabelComment": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "endcase"
+          ],
+          "description": "List of end keywords which should use a comment style (end // label) instead of an identifier style (end : label) on auto-completion."
+        },
+        "systemverilog.fillparam": {
+          "type": "boolean",
+          "default": true,
+          "description": "On module instantiation with parameter, the user is asked a value for each parameter."
+        },
+        "systemverilog.paramOneline": {
+          "type": "boolean",
+          "default": true,
+          "description": "On module instantiation with parameter, check if parameter binding can fit on one line."
+        },
+        "systemverilog.instOneline": {
+          "type": "boolean",
+          "default": true,
+          "description": "On module instantiation check if complete instantiation can fit on one line."
+        },
+        "systemverilog.autoconnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Control if signals are created and connected in module instantiation."
+        },
+        "systemverilog.paramExplicit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Control if parameter setting is explicit (appears in module instantiation even when default is used)."
+        },
+        "systemverilog.paramPropagate": {
+          "type": "boolean",
+          "default": false,
+          "description": "Control if symbolic parameters are used instead of default value."
+        },
+        "systemverilog.autoconnectAllowPrefix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Expand search for signal to \\w+_port."
+        },
+        "systemverilog.autoconnectAllowSuffix": {
+          "type": "boolean",
+          "default": true,
+          "description": "Expand search for signal to port_\\w+."
+        },
+        "systemverilog.autoconnectPortPrefix": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of prefixes to remove from the port before looking for a signal connection."
+        },
+        "systemverilog.autoconnectPortSuffix": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of suffixes to remove from the port before looking for a signal connection."
+        },
+        "systemverilog.instancePrefix": {
+          "type": "string",
+          "default": "i_",
+          "description": "Prefix to the module instantiation name."
+        },
+        "systemverilog.instanceSuffix": {
+          "type": "string",
+          "default": "",
+          "description": "Suffix to the module instantiation name."
+        },
+        "systemverilog.declStart": {
+          "type": "string",
+          "default": "Signals declaration",
+          "description": "Pattern to find for start of signals auto-declaration. Empty string to get declaration just above instantiation."
+        },
+        "systemverilog.declEnd": {
+          "type": "string",
+          "default": "/*----",
+          "description": "Pattern to find just after start to insert signal declaration before. Empty string to use first empty line after start pattern."
+        },
+        "systemverilog.declIndent": {
+          "type": "number",
+          "default": 1,
+          "description": "Number of indentation levels for signal declaration."
+        },
+        "systemverilog.autocompleteMaxLvl": {
+          "type": "number",
+          "default": 5,
+          "description": "Max hierarchy level for autocompletion. -1 for no limit."
+        },
+        "systemverilog.disableAutocomplete": {
+          "type": "boolean",
+          "default": false,
+          "description": "Fully disable smart auto-completion."
+        },
+        "systemverilog.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Display debug information in the console."
+        },
+        "systemverilog.completionSystemtask": {
+          "type": "array",
+          "description": "System task completion list. Each entry is [trigger, description, snippet]."
+        },
+        "systemverilog.completionSystemtaskUser": {
+          "type": "array",
+          "default": [],
+          "description": "User additions/overrides for the system task completion list."
+        },
+        "systemverilog.completionTick": {
+          "type": "array",
+          "description": "Compiler directive completion list."
+        },
+        "systemverilog.completionTickUser": {
+          "type": "array",
+          "default": [],
+          "description": "User additions/overrides for the compiler directive completion list."
+        },
+        "systemverilog.completionUvm": {
+          "type": "array",
+          "description": "UVM function completion list."
+        },
+        "systemverilog.completionUvmUser": {
+          "type": "array",
+          "default": [],
+          "description": "User additions/overrides for the UVM completion list."
+        },
+        "systemverilog.hierarchyNewWindow": {
+          "type": "boolean",
+          "default": false,
+          "description": "Open the module hierarchy in a new window."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node test/parser.test.js && node test/beautifier.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.0"
+  }
+}

@@ -1,0 +1,17 @@
+This project is a Visual Studio Code extension derived from the Sublime Text
+"SystemVerilog" plugin.
+
+Original project:
+  SystemVerilog (Sublime Text plugin)
+  Author: TheClams
+  Source: https://github.com/TheClams/SystemVerilog
+  Documentation: https://sv-doc.readthedocs.io/en/latest/
+  License: Apache License 2.0
+
+The core SystemVerilog parser (verilogutil.py) and the beautifier
+(verilog_beautifier.py) were ported to TypeScript, and their test data (under
+the `test/data` directory) is reused from the original project to validate the
+port.
+
+Modifications Copyright (c) the sv-vscode contributors.
+Licensed under the Apache License, Version 2.0.
