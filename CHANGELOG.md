@@ -1,5 +1,12 @@
 # Change Log
 
+## 1.0.3 (2026-10-05)
+
+- Add CHANGELOG entry for v1.0.2
+- chore: auto-update CHANGELOG on release and tag
+- Add configurable port hover colors with a settings UI
+
+
 ## 1.0.2
 
 - Add class support: classes are indexed even when declared with leading
