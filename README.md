@@ -26,6 +26,9 @@ Full Verilog / SystemVerilog TextMate grammar, plus language configuration
 - **Move / select block** (`Ctrl+M` / `Ctrl+Shift+M`): move to or select the
   enclosing `begin/end`, `module/endmodule`, `case/endcase`, ... block.
 - Hover provider showing declaration information.
+- Hovering a port binding (`.name(sig)`) shows the port direction, color-coded
+  per direction (input / output / inout / ref). Use **Configure Port Hover
+  Colors** to pick the colors in a UI.
 
 ### Completion
 - Smart `always` / `always_ff` / `always_comb` snippets that adapt to the
@@ -69,6 +72,7 @@ category (and from the editor context menu).
 | Verilog: GoTo Declaration | `Shift+F12` |
 | (move to block boundary) | `Ctrl+M` |
 | (select block boundary) | `Ctrl+Shift+M` |
+| Verilog: Configure Port Hover Colors | |
 
 ## Settings
 
