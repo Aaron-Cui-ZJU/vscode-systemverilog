@@ -5,6 +5,10 @@
   "version": "1.0.0",
   "publisher": "AaronCui",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Aaron-Cui-ZJU/vscode-systemverilog.git"
+  },
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -23,21 +27,6 @@
     "fpga"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [
-    "onLanguage:systemverilog",
-    "onCommand:systemverilog.showType",
-    "onCommand:systemverilog.instantiateModule",
-    "onCommand:systemverilog.align",
-    "onCommand:systemverilog.reindent",
-    "onCommand:systemverilog.toggleDotStar",
-    "onCommand:systemverilog.gotoDriver",
-    "onCommand:systemverilog.gotoDeclaration",
-    "onCommand:systemverilog.insertFsmTemplate",
-    "onCommand:systemverilog.showHierarchy",
-    "onCommand:systemverilog.findInstance",
-    "onCommand:systemverilog.findUnusedSignals",
-    "onCommand:systemverilog.lint"
-  ],
   "contributes": {
     "languages": [
       {
