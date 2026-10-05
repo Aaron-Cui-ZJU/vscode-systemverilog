@@ -10,6 +10,7 @@ import {
   parsePackage,
 } from './parser';
 import { getConfig } from './config';
+import * as logger from './logger';
 
 export type SymbolKind = 'module' | 'interface' | 'package' | 'class' | 'function' | 'task' | 'macro' | 'typedef';
 
@@ -47,6 +48,7 @@ export class WorkspaceIndex {
     }
     const data = await vscode.workspace.fs.readFile(uri);
     const text = Buffer.from(data).toString('utf8');
+    logger.debug(`index: read ${uri.fsPath} (${text.length} chars)`);
     this.records.set(key, {
       mtime,
       text,
@@ -123,7 +125,9 @@ export class WorkspaceIndex {
       }
     }
     const all = await vscode.workspace.findFiles('**/*.{v,sv,vh,svh}', '**/{node_modules,.git,out}/**');
-    return all.filter((u) => exts.has(path.extname(u.fsPath).slice(1).toLowerCase()));
+    const filtered = all.filter((u) => exts.has(path.extname(u.fsPath).slice(1).toLowerCase()));
+    logger.debug(`index: ${filtered.length} file(s) matched (headers=${includeHeaders})`);
+    return filtered;
   }
 
   async getSymbols(uri: vscode.Uri): Promise<SymbolEntry[]> {
@@ -160,6 +164,7 @@ export class WorkspaceIndex {
     if (active) {
       out.sort((a, b) => (b.uri.toString() === active ? 1 : 0) - (a.uri.toString() === active ? 1 : 0));
     }
+    logger.debug(`findSymbols "${name}": ${out.length} match(es)`);
     return out;
   }
 
@@ -169,9 +174,11 @@ export class WorkspaceIndex {
       const text = await this.readFile(s.uri);
       const info = parseModule(cleanComment(text), name, false, true);
       if (info) {
+        logger.debug(`lookupModule "${name}" -> ${s.uri.fsPath}`);
         return { info, uri: s.uri, text };
       }
     }
+    logger.debug(`lookupModule "${name}": not found`);
     return null;
   }
 

@@ -3,6 +3,7 @@ import { VerilogBeautifier } from './beautifier';
 import { getConfig, SvConfig } from './config';
 import { INDEX } from './indexer';
 import { ModuleInfo, TypeInfo, cleanComment, parseModule } from './parser';
+import * as logger from './logger';
 
 interface ConnectInfo {
   decl: string;
@@ -243,18 +244,23 @@ export async function instantiateModule(editor: vscode.TextEditor): Promise<void
     }
   }
   if (!items.length) {
+    logger.warn('instantiateModule: no module found in the project');
     vscode.window.showWarningMessage('No module found in the project');
     return;
   }
+  logger.debug(`instantiateModule: ${items.length} candidate module(s)`);
   const picked = await vscode.window.showQuickPick(items, {
     placeHolder: 'Select module to instantiate',
     matchOnDescription: true,
   });
   if (!picked) {
+    logger.debug('instantiateModule: cancelled at module selection');
     return;
   }
+  logger.info(`instantiateModule: selected "${picked.name}" from ${picked.description}`);
   const found = await INDEX.lookupModule(picked.name);
   if (!found) {
+    logger.error(`instantiateModule: unable to parse module ${picked.name}`);
     vscode.window.showErrorMessage('Unable to parse module ' + picked.name);
     return;
   }
@@ -311,6 +317,7 @@ export async function instantiateModule(editor: vscode.TextEditor): Promise<void
     decl = res.decl;
     Object.assign(ac, res.ac);
     Object.assign(wc, res.wc);
+    logger.debug(`instantiateModule: autoconnect declared ${decl ? decl.replace(/\n$/, '').split('\n').length : 0} signal(s), ${Object.keys(ac).length} renamed, ${Object.keys(wc).length} mismatch(es)`);
   }
 
   const instName = cfg.instancePrefix + pm.name + cfg.instanceSuffix;
@@ -427,6 +434,7 @@ export async function instantiateModule(editor: vscode.TextEditor): Promise<void
     s.push('Found ' + Object.keys(wc).length + ' mismatch(es): ' + JSON.stringify(wc));
   }
   if (s.length) {
+    logger.info('instantiateModule: ' + s.join(' | '));
     vscode.window.showInformationMessage(s.join(' | '));
   }
 }
@@ -455,9 +463,11 @@ export function toggleDotStar(editor: vscode.TextEditor): void {
   const offset = editor.document.offsetAt(editor.selection.active);
   const range = findInstantiationRange(text, offset);
   if (!range) {
+    logger.debug('toggleDotStar: cursor not inside a module instantiation');
     vscode.window.showInformationMessage('Cursor is not inside a module instantiation');
     return;
   }
+  logger.debug(`toggleDotStar: instantiation ${range.start}..${range.end}`);
   let raw = text.slice(range.start, range.end);
   const cleaned = cleanComment(raw);
   const bl = Array.from(cleaned.matchAll(/\.(\w+)\s*\(\s*([\s\S]*?)\s*\)/g)).map((m) => [m[1], m[2]] as [string, string]);
@@ -546,17 +556,23 @@ function applyDotStar(editor: vscode.TextEditor, range: { start: number; end: nu
 
 export function registerInstantiation(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('systemverilog.instantiateModule', async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        await instantiateModule(editor);
-      }
-    }),
-    vscode.commands.registerCommand('systemverilog.toggleDotStar', () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        toggleDotStar(editor);
-      }
-    })
+    vscode.commands.registerCommand(
+      'systemverilog.instantiateModule',
+      logger.command('systemverilog.instantiateModule', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          await instantiateModule(editor);
+        }
+      })
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.toggleDotStar',
+      logger.command('systemverilog.toggleDotStar', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          toggleDotStar(editor);
+        }
+      })
+    )
   );
 }

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { VerilogBeautifier } from './beautifier';
 import { getConfig } from './config';
+import * as logger from './logger';
 
 export function makeBeautifier(reindentOnly: boolean, editor: vscode.TextEditor): VerilogBeautifier {
   const c = getConfig();
@@ -55,36 +56,47 @@ export function align(editor: vscode.TextEditor, reindentOnly: boolean): void {
   }
   const txt = doc.getText(range);
   const beautifier = makeBeautifier(reindentOnly, editor);
+  logger.debug(`align: ${reindentOnly ? 'reindent' : 'full'} on ${txt.length} chars (${doc.fileName})`);
   let out: string;
   try {
     out = beautifier.beautifyText(txt);
   } catch (e) {
+    logger.error('alignment failed', e);
     vscode.window.showErrorMessage('SystemVerilog alignment failed: ' + (e as Error).message);
     return;
   }
   if (!out) {
+    logger.warn('alignment produced no output for this block');
     vscode.window.showInformationMessage('No alignment support for this block of code.');
     return;
   }
   if (out === txt) {
+    logger.debug('alignment: no change');
     return;
   }
+  logger.info(`alignment changed ${txt.length} -> ${out.length} chars`);
   replaceRange(editor, range, out, cursorOffset);
 }
 
 export function registerAlignment(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('systemverilog.align', () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        align(editor, false);
-      }
-    }),
-    vscode.commands.registerCommand('systemverilog.reindent', () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        align(editor, true);
-      }
-    })
+    vscode.commands.registerCommand(
+      'systemverilog.align',
+      logger.command('systemverilog.align', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          align(editor, false);
+        }
+      })
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.reindent',
+      logger.command('systemverilog.reindent', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          align(editor, true);
+        }
+      })
+    )
   );
 }

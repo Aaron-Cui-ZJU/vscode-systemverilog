@@ -1,15 +1,7 @@
 import * as vscode from 'vscode';
 import { INDEX } from './indexer';
 import { cleanComment, getEnumValues, parseModule } from './parser';
-
-let channel: vscode.OutputChannel | undefined;
-
-function getChannel(): vscode.OutputChannel {
-  if (!channel) {
-    channel = vscode.window.createOutputChannel('SystemVerilog');
-  }
-  return channel;
-}
+import * as logger from './logger';
 
 function signalNames(document: vscode.TextDocument) {
   const txt = cleanComment(document.getText());
@@ -124,11 +116,12 @@ export async function lint(document: vscode.TextDocument): Promise<void> {
   if (names.length) {
     s.push('Found unused signals: ' + names.join(', '));
   }
-  const out = getChannel();
-  out.clear();
+  logger.info(`lint ${vscode.workspace.asRelativePath(document.uri)}: ${undeclared.length} undeclared, ${names.length} unused`);
   if (s.length) {
-    out.appendLine(s.join('\n'));
-    out.show(true);
+    for (const line of s) {
+      logger.info(line);
+    }
+    logger.show();
   } else {
     vscode.window.showInformationMessage('Linting successful: no issue found');
   }
@@ -218,17 +211,23 @@ function escapeRe(s: string): string {
 
 export function registerLint(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
-    vscode.commands.registerCommand('systemverilog.lint', () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        lint(editor.document);
-      }
-    }),
-    vscode.commands.registerCommand('systemverilog.findUnusedSignals', () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        findUnusedInteractive(editor.document);
-      }
-    })
+    vscode.commands.registerCommand(
+      'systemverilog.lint',
+      logger.command('systemverilog.lint', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          lint(editor.document);
+        }
+      })
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.findUnusedSignals',
+      logger.command('systemverilog.findUnusedSignals', () => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+          findUnusedInteractive(editor.document);
+        }
+      })
+    )
   );
 }

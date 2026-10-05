@@ -3,6 +3,7 @@ import { TypeInfo, getAllTypeInfo, getTypeInfo, cleanComment, parseModule } from
 import { INDEX, getWordAt } from './indexer';
 import { findDeclarationLine, findDriver, typeInfo } from './lookup';
 import { getConfig } from './config';
+import * as logger from './logger';
 
 let statusBar: vscode.StatusBarItem;
 let lastHoverText = '';
@@ -12,13 +13,34 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
   context.subscriptions.push(statusBar);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('systemverilog.showType', () => showType()),
-    vscode.commands.registerCommand('systemverilog.gotoDeclaration', () => gotoDeclaration()),
-    vscode.commands.registerCommand('systemverilog.gotoDriver', () => gotoDriver()),
-    vscode.commands.registerCommand('systemverilog.showHierarchy', () => showHierarchy()),
-    vscode.commands.registerCommand('systemverilog.findInstance', () => findInstance()),
-    vscode.commands.registerCommand('systemverilog.gotoBlockBoundary', () => blockBoundary('move')),
-    vscode.commands.registerCommand('systemverilog.selectBlockBoundary', () => blockBoundary('select'))
+    vscode.commands.registerCommand(
+      'systemverilog.showType',
+      logger.command('systemverilog.showType', () => showType())
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoDeclaration',
+      logger.command('systemverilog.gotoDeclaration', () => gotoDeclaration())
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoDriver',
+      logger.command('systemverilog.gotoDriver', () => gotoDriver())
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.showHierarchy',
+      logger.command('systemverilog.showHierarchy', () => showHierarchy())
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.findInstance',
+      logger.command('systemverilog.findInstance', () => findInstance())
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoBlockBoundary',
+      logger.command('systemverilog.gotoBlockBoundary', () => blockBoundary('move'))
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.selectBlockBoundary',
+      logger.command('systemverilog.selectBlockBoundary', () => blockBoundary('select'))
+    )
   );
 
   context.subscriptions.push(
@@ -81,6 +103,7 @@ async function showType(): Promise<void> {
   }
   const word = selectedOrWord(editor);
   if (!word) {
+    logger.debug('showType: no symbol under cursor');
     return;
   }
   const text = editor.document.getText();
@@ -94,9 +117,11 @@ async function showType(): Promise<void> {
   }
   const cfg = getConfig();
   if (!ti || !ti.type) {
+    logger.debug(`showType: no type info for "${word}"`);
     vscode.window.showInformationMessage('No type information found for "' + word + '"');
     return;
   }
+  logger.info(`showType "${word}": ${ti.decl || ti.type}`);
   const md = formatTypeInfo(ti);
   if (cfg.tooltip) {
     const editor2 = vscode.window.activeTextEditor!;
@@ -134,6 +159,7 @@ async function gotoDeclaration(): Promise<void> {
   const syms = await INDEX.findSymbols(word);
   if (syms.length) {
     const target = syms[0];
+    logger.info(`gotoDeclaration "${word}" -> ${target.kind} at ${vscode.workspace.asRelativePath(target.uri)}:${target.line + 1}`);
     const doc = await vscode.workspace.openTextDocument(target.uri);
     const ed = await vscode.window.showTextDocument(doc);
     const pos = new vscode.Position(target.line, 0);
@@ -143,10 +169,12 @@ async function gotoDeclaration(): Promise<void> {
   }
   const line = findDeclarationLine(editor.document.getText(), word);
   if (line >= 0) {
+    logger.info(`gotoDeclaration "${word}" -> line ${line + 1} (current file)`);
     const pos = new vscode.Position(line, 0);
     editor.selection = new vscode.Selection(pos, pos);
     editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
   } else {
+    logger.debug(`gotoDeclaration "${word}": not found`);
     vscode.window.showInformationMessage('Declaration not found for "' + word + '"');
   }
 }
@@ -162,10 +190,12 @@ function gotoDriver(): void {
   }
   const res = findDriver(editor.document.getText(), word);
   if (res) {
+    logger.info(`gotoDriver "${word}" -> ${res.detail} at line ${res.line + 1}`);
     const pos = new vscode.Position(res.line, Math.max(0, res.character));
     editor.selection = new vscode.Selection(pos, pos);
     editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
   } else {
+    logger.debug(`gotoDriver "${word}": no driver found`);
     vscode.window.showInformationMessage('Driver not found for "' + word + '"');
   }
 }
@@ -177,9 +207,11 @@ async function showHierarchy(): Promise<void> {
   }
   const mi = parseModule(cleanComment(editor.document.getText()), '\\w+', false, false);
   if (!mi) {
+    logger.warn('showHierarchy: no module found in current file');
     vscode.window.showWarningMessage('No module found in current file');
     return;
   }
+  logger.info(`showHierarchy from module "${mi.name}"`);
   const lines: string[] = [];
   const seen = new Set<string>();
   async function recurse(name: string, inst: string, level: number): Promise<void> {
@@ -203,6 +235,7 @@ async function showHierarchy(): Promise<void> {
     }
   }
   await recurse(mi.name, '', 0);
+  logger.info(`showHierarchy: ${lines.length} node(s)`);
   const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'systemverilog' });
   await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
 }
@@ -234,9 +267,11 @@ async function findInstance(): Promise<void> {
     }
   }
   if (!results.length) {
+    logger.info(`findInstance "${name}": no instance found`);
     vscode.window.showInformationMessage('No instance of "' + name + '" found');
     return;
   }
+  logger.info(`findInstance "${name}": ${results.length} instance(s)`);
   const doc = await vscode.workspace.openTextDocument({
     content: 'Instances of ' + name + ':\n\n' + results.join('\n'),
     language: 'systemverilog',
@@ -269,9 +304,11 @@ function blockBoundary(cmd: 'move' | 'select'): void {
   const offset = editor.document.offsetAt(editor.selection.active);
   const match = findEnclosingBlock(text, offset);
   if (!match) {
+    logger.debug('blockBoundary: no enclosing block at cursor');
     vscode.window.showInformationMessage('No block found at cursor');
     return;
   }
+  logger.debug(`blockBoundary ${cmd}: ${match.start}..${match.end}`);
   const start = editor.document.positionAt(match.start);
   const end = editor.document.positionAt(match.end);
   if (cmd === 'select') {

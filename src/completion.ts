@@ -20,6 +20,7 @@ import {
   reDecl,
 } from './parser';
 import { typeInfo } from './lookup';
+import * as logger from './logger';
 
 function mostCommon(list: string[]): string {
   const counts = new Map<string, number>();
@@ -340,8 +341,10 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
         items = keywordItems();
       }
       if (!items.length) {
+        logger.debug(`completion: prefix="${prefix}" prevSym="${prevSym}" -> no item`);
         return undefined;
       }
+      logger.debug(`completion: prefix="${prefix}" prevSym="${prevSym}" -> ${items.length} item(s)`);
       const range = new vscode.Range(position.translate(0, -prefix.length), position);
       return items.map((it) => {
         const ci = new vscode.CompletionItem(it.label, it.kind ?? vscode.CompletionItemKind.Snippet);
