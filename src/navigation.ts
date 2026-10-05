@@ -6,7 +6,6 @@ import { getConfig } from './config';
 import * as logger from './logger';
 
 let statusBar: vscode.StatusBarItem;
-let lastHoverText = '';
 
 export function registerNavigation(context: vscode.ExtensionContext): void {
   statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -40,6 +39,18 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'systemverilog.selectBlockBoundary',
       logger.command('systemverilog.selectBlockBoundary', () => blockBoundary('select'))
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoModule',
+      logger.command('systemverilog.gotoModule', (arg?: unknown) => gotoModule(arg))
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoPortReference',
+      logger.command('systemverilog.gotoPortReference', (arg?: unknown) => gotoPortSignal(arg, 'reference'))
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoPortDriver',
+      logger.command('systemverilog.gotoPortDriver', (arg?: unknown) => gotoPortSignal(arg, 'driver'))
     )
   );
 
@@ -53,19 +64,587 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
         if (cfg.hoverMaxSize > 0 && Buffer.byteLength(document.getText(), 'utf8') > cfg.hoverMaxSize) {
           return undefined;
         }
+        const binding = findPortBindingAt(document, position);
+        if (binding) {
+          const bindingMd = await buildPortHover(binding);
+          if (bindingMd) {
+            return new vscode.Hover(bindingMd, document.getWordRangeAtPosition(position));
+          }
+        }
         const word = currentWord(document, position);
         if (!word) {
           return undefined;
         }
-        const ti = await typeInfo(document, word);
-        if (!ti || !ti.type) {
+        const md = await buildHover(document, word);
+        if (!md) {
           return undefined;
         }
-        lastHoverText = formatTypeInfo(ti);
-        const md = new vscode.MarkdownString(lastHoverText);
         return new vscode.Hover(md, document.getWordRangeAtPosition(position));
       },
     })
+  );
+}
+
+function commandLink(label: string, command: string, arg: unknown): string {
+  return `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(arg))})`;
+}
+
+// Build the hover markdown, including a clickable link to the module definition
+// when hovering an instantiation (its instance name or its module type).
+async function buildHover(document: vscode.TextDocument, word: string): Promise<vscode.MarkdownString | undefined> {
+  // 1) The word is a module / interface defined somewhere in the workspace.
+  const modSyms = await INDEX.findSymbols(word, ['module', 'interface']);
+  if (modSyms.length) {
+    const md = new vscode.MarkdownString();
+    md.isTrusted = true;
+    md.appendMarkdown(commandLink('Go to module definition of `' + word + '`', 'systemverilog.gotoModule', { name: word }));
+    md.appendMarkdown(`\n\n_${vscode.workspace.asRelativePath(modSyms[0].uri)}_`);
+    return md;
+  }
+
+  // 2) Instance name: resolve the instantiated module from the current file.
+  const mi = parseModule(cleanComment(document.getText()), '\\w+', false, false);
+  let instanceType: string | null = null;
+  if (mi) {
+    const inst = mi.inst.find((i) => i.name === word);
+    if (inst && inst.type) {
+      instanceType = inst.type;
+    }
+  }
+
+  const ti = await typeInfo(document, word);
+  if (!instanceType && ti && ti.tag === 'inst' && ti.type) {
+    instanceType = ti.type.split(/\s+/)[0];
+  }
+
+  if (instanceType) {
+    const md = new vscode.MarkdownString();
+    md.isTrusted = true;
+    if (ti && ti.type) {
+      md.appendMarkdown(formatTypeInfo(ti));
+    } else {
+      md.appendMarkdown('**instance** `' + word + '` of `' + instanceType + '`');
+    }
+    const targets = await INDEX.findSymbols(instanceType, ['module', 'interface']);
+    if (targets.length) {
+      md.appendMarkdown(
+        '\n\n' +
+          commandLink('Go to module definition of `' + instanceType + '`', 'systemverilog.gotoModule', {
+            name: instanceType,
+          })
+      );
+      md.appendMarkdown(`\n\n_${vscode.workspace.asRelativePath(targets[0].uri)}_`);
+    }
+    return md;
+  }
+
+  // 3) Plain signal / member.
+  if (!ti || !ti.type) {
+    return undefined;
+  }
+  const md = new vscode.MarkdownString();
+  md.isTrusted = true;
+  md.appendMarkdown(formatTypeInfo(ti));
+  return md;
+}
+
+async function gotoModule(arg?: unknown): Promise<void> {
+  let name: string | undefined;
+  if (typeof arg === 'string') {
+    name = arg;
+  } else if (arg && typeof arg === 'object' && typeof (arg as { name?: string }).name === 'string') {
+    name = (arg as { name: string }).name;
+  }
+  if (!name) {
+    return;
+  }
+  const syms = await INDEX.findSymbols(name, ['module', 'interface']);
+  if (!syms.length) {
+    logger.debug(`gotoModule "${name}": not found`);
+    vscode.window.showInformationMessage('Module not found: ' + name);
+    return;
+  }
+  const target = syms[0];
+  logger.info(`gotoModule "${name}" -> ${vscode.workspace.asRelativePath(target.uri)}:${target.line + 1}`);
+  const doc = await vscode.workspace.openTextDocument(target.uri);
+  const ed = await vscode.window.showTextDocument(doc);
+  const pos = new vscode.Position(target.line, 0);
+  ed.selection = new vscode.Selection(pos, pos);
+  ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+}
+
+interface PortBinding {
+  moduleType: string;
+  port: string;
+}
+
+// Detect whether `position` sits on the formal port name of an instantiation
+// binding such as `.clk (clk)` (the word before the parenthesis) and return the
+// instantiated module type together with the port name.
+function findPortBindingAt(document: vscode.TextDocument, position: vscode.Position): PortBinding | null {
+  const text = document.getText();
+  const offset = document.offsetAt(position);
+  const bindRe = /\.\s*([A-Za-z_]\w*)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = bindRe.exec(text)) !== null) {
+    const name = m[1];
+    const nameOffset = m.index + m[0].indexOf(name);
+    if (nameOffset > offset) {
+      break;
+    }
+    if (offset < nameOffset + name.length) {
+      const openParen = enclosingParenOpen(text, nameOffset);
+      if (openParen < 0) {
+        return null;
+      }
+      const moduleType = instanceTypeBefore(text, openParen);
+      if (moduleType) {
+        return { moduleType, port: name };
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+function isIdentChar(c: string): boolean {
+  return /[A-Za-z0-9_]/.test(c);
+}
+
+// Offset of the innermost `(` enclosing `offset`, or -1.
+function enclosingParenOpen(text: string, offset: number): number {
+  let depth = 0;
+  for (let i = offset - 1; i >= 0; i--) {
+    const c = text[i];
+    if (c === ')') {
+      depth += 1;
+    } else if (c === '(') {
+      if (depth === 0) {
+        return i;
+      }
+      depth -= 1;
+    }
+  }
+  return -1;
+}
+
+// Read the module type of the instantiation whose port-list `(` is at `portListOpen`,
+// e.g. `foo u_foo (`, `foo #(...) u_foo (` or `foo u_foo [3:0] (`.
+function instanceTypeBefore(text: string, portListOpen: number): string | null {
+  let i = portListOpen - 1;
+  while (i >= 0 && /\s/.test(text[i])) {
+    i -= 1;
+  }
+  // Skip an optional array range after the instance name: `u_foo [3:0] (`.
+  if (text[i] === ']') {
+    let depth = 1;
+    i -= 1;
+    while (i >= 0 && depth > 0) {
+      if (text[i] === ']') {
+        depth += 1;
+      } else if (text[i] === '[') {
+        depth -= 1;
+      }
+      i -= 1;
+    }
+    while (i >= 0 && /\s/.test(text[i])) {
+      i -= 1;
+    }
+  }
+  const nameEnd = i + 1;
+  while (i >= 0 && isIdentChar(text[i])) {
+    i -= 1;
+  }
+  const instName = text.slice(i + 1, nameEnd);
+  if (!/^[A-Za-z_]/.test(instName)) {
+    return null;
+  }
+  while (i >= 0 && /\s/.test(text[i])) {
+    i -= 1;
+  }
+  // Skip an optional parameter override before the instance name: `foo #(...) u_foo (`.
+  if (text[i] === ')') {
+    let depth = 1;
+    i -= 1;
+    while (i >= 0 && depth > 0) {
+      if (text[i] === ')') {
+        depth += 1;
+      } else if (text[i] === '(') {
+        depth -= 1;
+      }
+      i -= 1;
+    }
+    while (i >= 0 && (text[i] === '#' || /\s/.test(text[i]))) {
+      i -= 1;
+    }
+  }
+  const typeEnd = i + 1;
+  while (i >= 0 && isIdentChar(text[i])) {
+    i -= 1;
+  }
+  const type = text.slice(i + 1, typeEnd);
+  if (!/^[A-Za-z_]/.test(type) || ['module', 'interface', 'function', 'task', 'program'].includes(type)) {
+    return null;
+  }
+  return type;
+}
+
+// Return the index of the parenthesis matching the `(` at `open`, or -1.
+function matchParen(text: string, open: number): number {
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (c === '(') {
+      depth += 1;
+    } else if (c === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+// Theme-aware colors used to make the port direction stand out in the hover.
+const DIRECTION_COLORS: Record<string, string> = {
+  input: 'var(--vscode-charts-blue)',
+  output: 'var(--vscode-charts-orange)',
+  inout: 'var(--vscode-charts-purple)',
+  ref: 'var(--vscode-charts-green)',
+};
+
+function directionBadge(dir: string): string {
+  const color = DIRECTION_COLORS[dir];
+  if (!color) {
+    return dir;
+  }
+  return `<span style="color:${color};">${dir}</span>`;
+}
+
+// Build the hover for a port binding: show the port declaration / direction and
+// a link that jumps inside the instantiated module (first use for inputs,
+// driver for outputs).
+async function buildPortHover(binding: PortBinding): Promise<vscode.MarkdownString | undefined> {
+  const found = await INDEX.lookupModule(binding.moduleType);
+  if (!found) {
+    return undefined;
+  }
+  const port = found.info.port.find((p) => p.name === binding.port);
+  if (!port) {
+    return undefined;
+  }
+  const decl = (port.decl || port.name).trim();
+  const dir = (
+    (decl.match(/^(input|output|inout|ref)\b/) || [])[1] ||
+    ((port.type || '').match(/^(input|output|inout|ref)\b/) || [])[0] ||
+    ''
+  ).trim();
+  const md = new vscode.MarkdownString();
+  md.isTrusted = true;
+  md.supportHtml = true;
+  md.appendMarkdown(`**${binding.moduleType}** port \`${decl}\``);
+  if (dir) {
+    md.appendMarkdown(`\n\ndirection: ${directionBadge(dir)}`);
+  }
+  if (dir === 'output') {
+    md.appendMarkdown(
+      '\n\n' +
+        commandLink(`Go to driver of \`${binding.port}\``, 'systemverilog.gotoPortDriver', {
+          module: binding.moduleType,
+          port: binding.port,
+        })
+    );
+  } else if (dir === 'input' || dir === 'inout') {
+    md.appendMarkdown(
+      '\n\n' +
+        commandLink(`Go to first use of \`${binding.port}\``, 'systemverilog.gotoPortReference', {
+          module: binding.moduleType,
+          port: binding.port,
+        })
+    );
+  }
+  md.appendMarkdown(`\n\n_${vscode.workspace.asRelativePath(found.uri)}_`);
+  return md;
+}
+
+interface PortNavArgument {
+  module?: string;
+  port?: string;
+}
+
+function parsePortNavArg(arg: unknown): PortNavArgument | null {
+  if (typeof arg === 'string') {
+    return { port: arg };
+  }
+  if (arg && typeof arg === 'object') {
+    const a = arg as { module?: unknown; port?: unknown };
+    return {
+      module: typeof a.module === 'string' ? a.module : undefined,
+      port: typeof a.port === 'string' ? a.port : undefined,
+    };
+  }
+  return null;
+}
+
+// Jump inside the instantiated module: to the first use of an input/inout port,
+// or to the driver of an output port.
+async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promise<void> {
+  const a = parsePortNavArg(arg);
+  if (!a || !a.port) {
+    return;
+  }
+  let moduleName = a.module;
+  if (!moduleName) {
+    const editor = vscode.window.activeTextEditor;
+    if (editor) {
+      const mi = parseModule(cleanComment(editor.document.getText()), '\\w+', false, false);
+      moduleName = mi ? mi.name : undefined;
+    }
+  }
+  if (!moduleName) {
+    return;
+  }
+  const syms = await INDEX.findSymbols(moduleName, ['module', 'interface']);
+  for (const s of syms) {
+    const text = await INDEX.readFile(s.uri);
+    const range = findModuleRange(text, moduleName);
+    if (!range) {
+      continue;
+    }
+    let offset: number | null;
+    if (kind === 'driver') {
+      offset = findDriverAt(text, a.port, range);
+      if (offset === null) {
+        offset = await findSubmoduleDriverAt(text, a.port, range);
+      }
+    } else {
+      offset = findFirstUseAt(text, a.port, range);
+    }
+    if (offset !== null) {
+      logger.info(
+        `gotoPort ${kind} "${a.port}" in ${moduleName} -> ${vscode.workspace.asRelativePath(s.uri)}`
+      );
+      await openAt(s.uri, offset);
+      return;
+    }
+  }
+  logger.debug(`gotoPort ${kind} "${a.port}": not found in ${moduleName}`);
+  vscode.window.showInformationMessage(`No ${kind} of "${a.port}" found in ${moduleName}`);
+}
+
+async function openAt(uri: vscode.Uri, offset: number): Promise<void> {
+  const doc = await vscode.workspace.openTextDocument(uri);
+  const ed = await vscode.window.showTextDocument(doc);
+  const pos = doc.positionAt(offset);
+  ed.selection = new vscode.Selection(pos, pos);
+  ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+}
+
+interface TextSpan {
+  start: number;
+  end: number;
+  bodyStart: number;
+}
+
+// Locate the definition of a module/interface inside `text`.
+function findModuleRange(text: string, name: string): TextSpan | null {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp('\\b(?:module|interface)\\s+' + esc + '\\b[\\s\\S]*?\\bend(?:module|interface)\\b').exec(text);
+  if (!m) {
+    return null;
+  }
+  const start = m.index;
+  const end = m.index + m[0].length;
+  const semi = text.indexOf(';', start);
+  const bodyStart = semi >= 0 && semi < end ? semi + 1 : start;
+  return { start, end, bodyStart };
+}
+
+type Span = [number, number];
+
+// Compute the offset intervals occupied by comments and string literals.
+function commentSpans(text: string): Span[] {
+  const out: Span[] = [];
+  let i = 0;
+  let state: 'code' | 'line' | 'block' | 'string' = 'code';
+  let start = 0;
+  while (i < text.length) {
+    const c = text[i];
+    const n = i + 1 < text.length ? text[i + 1] : '';
+    if (state === 'code') {
+      if (c === '/' && n === '/') {
+        state = 'line';
+        start = i;
+        i += 2;
+        continue;
+      }
+      if (c === '/' && n === '*') {
+        state = 'block';
+        start = i;
+        i += 2;
+        continue;
+      }
+      if (c === '"') {
+        state = 'string';
+        start = i;
+        i += 1;
+        continue;
+      }
+    } else if (state === 'line') {
+      if (c === '\n') {
+        out.push([start, i]);
+        state = 'code';
+      }
+    } else if (state === 'block') {
+      if (c === '*' && n === '/') {
+        out.push([start, i + 2]);
+        state = 'code';
+        i += 2;
+        continue;
+      }
+    } else if (state === 'string') {
+      if (c === '\\') {
+        i += 2;
+        continue;
+      }
+      if (c === '"') {
+        out.push([start, i + 1]);
+        state = 'code';
+      }
+    }
+    i += 1;
+  }
+  if (state !== 'code') {
+    out.push([start, text.length]);
+  }
+  return out;
+}
+
+function inSpans(spans: Span[], offset: number): boolean {
+  for (const [s, e] of spans) {
+    if (s > offset) {
+      break;
+    }
+    if (offset >= s && offset < e) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// First occurrence of `signal` inside the module body (ignoring comments/strings).
+function findFirstUseAt(text: string, signal: string, range: TextSpan): number | null {
+  const re = new RegExp('\\b' + escapeRe(signal) + '\\b', 'g');
+  const spans = commentSpans(text);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const off = m.index;
+    if (off < range.bodyStart) {
+      continue;
+    }
+    if (off >= range.end) {
+      break;
+    }
+    if (inSpans(spans, off)) {
+      continue;
+    }
+    return off;
+  }
+  return null;
+}
+
+// Location where `signal` is driven inside the module body by an assignment.
+// The optional `[...]` handles indexed targets used in generate loops.
+function findDriverAt(text: string, signal: string, range: TextSpan): number | null {
+  const esc = escapeRe(signal);
+  const body = text.slice(range.bodyStart, range.end);
+  const base = range.bodyStart;
+  const spans = commentSpans(text);
+  const patterns = [
+    '(?:^|[^\\w.])(' + esc + ')\\b(?:\\s*\\[[^\\]]*\\])*\\s*(?:<=|=)(?!=)',
+    '\\bassign\\b[^;\\n]*\\b(' + esc + ')\\b(?:\\s*\\[[^\\]]*\\])*\\s*=',
+    '\\boutput\\b[^;\\n]*\\b(' + esc + ')\\b',
+  ];
+  for (const source of patterns) {
+    const re = new RegExp(source, 'g');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      const off = base + m.index + m[0].indexOf(m[1]);
+      if (inSpans(spans, off)) {
+        continue;
+      }
+      return off;
+    }
+  }
+  return null;
+}
+
+// Location where `signal` is driven by being connected to an output of a
+// submodule instance (including instances inside a generate block).
+async function findSubmoduleDriverAt(text: string, signal: string, range: TextSpan): Promise<number | null> {
+  const body = text.slice(range.bodyStart, range.end);
+  const base = range.bodyStart;
+  const spans = commentSpans(text);
+  const signalRe = new RegExp('\\b' + escapeRe(signal) + '\\b');
+  const dirCache = new Map<string, string | null>();
+  const portRe = /\.\s*([A-Za-z_]\w*)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = portRe.exec(body)) !== null) {
+    const portName = m[1];
+    const nameOffset = m.index + m[0].indexOf(portName);
+    const openParen = enclosingParenOpen(body, nameOffset);
+    if (openParen < 0) {
+      continue;
+    }
+    const moduleType = instanceTypeBefore(body, openParen);
+    if (!moduleType) {
+      continue;
+    }
+    const connOpen = m.index + m[0].length - 1;
+    const connClose = matchParen(body, connOpen);
+    if (connClose === -1) {
+      continue;
+    }
+    const conn = body.slice(connOpen + 1, connClose);
+    if (!signalRe.test(conn)) {
+      continue;
+    }
+    const off = base + connOpen + 1 + conn.search(signalRe);
+    if (inSpans(spans, off)) {
+      continue;
+    }
+    const key = moduleType + '::' + portName;
+    let dir = dirCache.get(key);
+    if (dir === undefined) {
+      dir = await portDirection(moduleType, portName);
+      dirCache.set(key, dir);
+    }
+    if (dir === 'output' || dir === 'inout') {
+      return off;
+    }
+  }
+  return null;
+}
+
+async function portDirection(moduleType: string, portName: string): Promise<string | null> {
+  const found = await INDEX.lookupModule(moduleType);
+  if (!found) {
+    return null;
+  }
+  const port = found.info.port.find((p) => p.name === portName);
+  if (!port) {
+    return null;
+  }
+  const decl = (port.decl || port.name).trim();
+  return (
+    (decl.match(/^(input|output|inout|ref)\b/) || [])[1] ||
+    ((port.type || '').match(/^(input|output|inout|ref)\b/) || [])[0] ||
+    null
   );
 }
 

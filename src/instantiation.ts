@@ -441,7 +441,7 @@ export async function instantiateModule(editor: vscode.TextEditor): Promise<void
 
 // -------------------- dot star --------------------
 
-function findInstantiationRange(text: string, offset: number): { start: number; end: number } | null {
+export function findInstantiationRange(text: string, offset: number): { start: number; end: number } | null {
   const end = text.indexOf(';', offset);
   if (end === -1) {
     return null;
