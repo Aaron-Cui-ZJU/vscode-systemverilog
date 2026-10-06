@@ -20,14 +20,13 @@ export function registerSettingsPanel(context: vscode.ExtensionContext): void {
 function openSettingsPanel(): void {
   if (panel) {
     panel.reveal();
-    void updatePanel(panel);
     return;
   }
   panel = vscode.window.createWebviewPanel(
     'systemverilog.settings',
     'SystemVerilog Settings',
     vscode.ViewColumn.Active,
-    { enableScripts: true }
+    { enableScripts: true, retainContextWhenHidden: true }
   );
   panel.onDidDispose(() => {
     panel = undefined;
@@ -230,9 +229,14 @@ function settingsHtml(
   const vscode = acquireVsCodeApi();
   const DIRECTIONS = ${directions};
   const DEFAULTS = ${defaults};
-  let colors = ${initial};
-  let lists = ${initialLists};
-  let incdirs = ${initialIncDirs};
+  const restore = vscode.getState();
+  let colors = restore && restore.colors ? restore.colors : ${initial};
+  let lists = restore && restore.lists ? restore.lists : ${initialLists};
+  let incdirs = restore && restore.incdirs ? restore.incdirs : ${initialIncDirs};
+
+  function persistDraft() {
+    vscode.setState({ colors, lists, incdirs });
+  }
 
   function resolveHex(value) {
     const probe = document.createElement('span');
@@ -312,10 +316,12 @@ function settingsHtml(
     row.picker.addEventListener('input', () => {
       colors[row.dir] = row.picker.value;
       apply(row.dir);
+      persistDraft();
     });
     row.text.addEventListener('input', () => {
       colors[row.dir] = row.text.value;
       apply(row.dir);
+      persistDraft();
     });
   }
 
@@ -332,7 +338,7 @@ function settingsHtml(
       file.spellcheck = false;
       file.placeholder = 'path/to/files.f';
       file.value = item.file;
-      file.addEventListener('input', () => { lists[idx].file = file.value; });
+      file.addEventListener('input', () => { lists[idx].file = file.value; persistDraft(); });
       tdFile.appendChild(file);
 
       const tdBase = document.createElement('td');
@@ -342,7 +348,7 @@ function settingsHtml(
       base.spellcheck = false;
       base.placeholder = 'e.g. . or rtl/';
       base.value = item.base;
-      base.addEventListener('input', () => { lists[idx].base = base.value; });
+      base.addEventListener('input', () => { lists[idx].base = base.value; persistDraft(); });
       tdBase.appendChild(base);
 
       const tdDel = document.createElement('td');
@@ -350,7 +356,7 @@ function settingsHtml(
       del.type = 'button';
       del.className = 'secondary small';
       del.textContent = 'Remove';
-      del.addEventListener('click', () => { lists.splice(idx, 1); renderLists(); });
+      del.addEventListener('click', () => { lists.splice(idx, 1); renderLists(); persistDraft(); });
       tdDel.appendChild(del);
 
       tr.append(tdFile, tdBase, tdDel);
@@ -422,6 +428,7 @@ function settingsHtml(
   document.getElementById('addList').addEventListener('click', () => {
     lists.push({ file: '', base: '' });
     renderLists();
+    persistDraft();
   });
 
   function renderIncDirs() {
@@ -437,7 +444,7 @@ function settingsHtml(
       input.spellcheck = false;
       input.placeholder = 'e.g. ../design/tb/vips';
       input.value = dir;
-      input.addEventListener('input', () => { incdirs[idx] = input.value; });
+      input.addEventListener('input', () => { incdirs[idx] = input.value; persistDraft(); });
       tdDir.appendChild(input);
 
       const tdDel = document.createElement('td');
@@ -445,7 +452,7 @@ function settingsHtml(
       del.type = 'button';
       del.className = 'secondary small';
       del.textContent = 'Remove';
-      del.addEventListener('click', () => { incdirs.splice(idx, 1); renderIncDirs(); });
+      del.addEventListener('click', () => { incdirs.splice(idx, 1); renderIncDirs(); persistDraft(); });
       tdDel.appendChild(del);
 
       tr.append(tdDir, tdDel);
@@ -456,6 +463,7 @@ function settingsHtml(
   document.getElementById('addInc').addEventListener('click', () => {
     incdirs.push('');
     renderIncDirs();
+    persistDraft();
   });
 
   const incValidationBox = document.getElementById('incValidation');
@@ -515,6 +523,7 @@ function settingsHtml(
 
   document.getElementById('save').addEventListener('click', () => {
     vscode.postMessage({ type: 'save', colors, fileLists: lists, includeDirs: incdirs });
+    persistDraft();
   });
   document.getElementById('reset').addEventListener('click', () => {
     colors = Object.assign({}, DEFAULTS);
@@ -525,6 +534,7 @@ function settingsHtml(
     }
     renderLists();
     renderIncDirs();
+    persistDraft();
     vscode.postMessage({ type: 'reset' });
   });
 
