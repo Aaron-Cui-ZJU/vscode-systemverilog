@@ -27,8 +27,8 @@ Full Verilog / SystemVerilog TextMate grammar, plus language configuration
   enclosing `begin/end`, `module/endmodule`, `case/endcase`, ... block.
 - Hover provider showing declaration information.
 - Hovering a port binding (`.name(sig)`) shows the port direction, color-coded
-  per direction (input / output / inout / ref). Use **Configure Port Hover
-  Colors** to pick the colors in a UI.
+  per direction (input / output / inout / ref). Use **Configure Settings** to
+  pick the colors in a UI.
 
 ### Completion
 - Smart `always` / `always_ff` / `always_comb` snippets that adapt to the
@@ -72,7 +72,7 @@ category (and from the editor context menu).
 | Verilog: GoTo Declaration | `Shift+F12` |
 | (move to block boundary) | `Ctrl+M` |
 | (select block boundary) | `Ctrl+Shift+M` |
-| Verilog: Configure Port Hover Colors | |
+| Verilog: Configure Settings | |
 
 ## Settings
 
@@ -80,6 +80,28 @@ Every setting of the original plugin is available under the `systemverilog.*`
 namespace (e.g. `systemverilog.clkName`, `systemverilog.autoconnect`,
 `systemverilog.alignmentIgnoreTick`, `systemverilog.completionSystemtaskUser`,
 ...). See the Settings UI for the full list with descriptions.
+
+`systemverilog.fileLists` limits the workspace index to the files referenced by
+one or more filelists, which speeds up indexing on large projects. Each entry
+pairs a filelist `file` with the `base` directory its paths are resolved against;
+entries support `-f` / `-F` includes, comments, quoted paths, `+incdir+` / `-I`
+search directories and `$VAR` expansion. `` `include `` directives inside the
+listed files are followed too (searching the including file's directory, then
+the include directories, then `base`), so a package header that only includes
+other files still pulls them into the index. Leave the list empty to index the
+whole workspace.
+
+`systemverilog.includeDirs` adds global include search directories (absolute or
+relative to the workspace root), mirroring the `+incdir+` paths of your compile
+command. They are searched for every `` `include `` in addition to the including
+file's directory and any `+incdir+` / `-I` paths declared in the filelists. Use
+them when your flists do not carry the include paths (for example when they come
+from the build script). **Validate** next to this section checks that each
+directory exists and lists every `` `include `` that still cannot be resolved.
+
+Both settings and the port hover colors can be edited from **Verilog:
+Configure Settings**, where **Validate** checks each entry and reports how many
+files resolve (and which are missing) before you save.
 
 ## Building
 

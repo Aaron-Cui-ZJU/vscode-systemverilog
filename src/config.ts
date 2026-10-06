@@ -1,6 +1,9 @@
 import * as vscode from 'vscode';
+import { FileListSetting } from './filelist';
 
 export interface SvConfig {
+  fileLists: FileListSetting[];
+  includeDirs: string[];
   vExt: string[];
   svExt: string[];
   vhExt: string[];
@@ -88,7 +91,18 @@ export function getConfig(): SvConfig {
   const arr = (v: any): string[] => (Array.isArray(v) ? v.map(String) : []);
   const cl = (v: any): CompletionEntry[] =>
     Array.isArray(v) ? (v.filter((x) => Array.isArray(x)) as CompletionEntry[]) : [];
+  const fl = (v: any): FileListSetting[] =>
+    Array.isArray(v)
+      ? (v
+          .filter((x) => x && typeof x === 'object')
+          .map((x) => ({
+            file: String((x as any).file ?? ''),
+            base: String((x as any).base ?? ''),
+          })) as FileListSetting[])
+      : [];
   return {
+    fileLists: fl(c.get('fileLists')),
+    includeDirs: arr(c.get('includeDirs')),
     vExt: arr(c.get('vExt')),
     svExt: arr(c.get('svExt')),
     vhExt: arr(c.get('vhExt')),

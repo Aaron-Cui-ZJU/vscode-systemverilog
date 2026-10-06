@@ -4,10 +4,11 @@ import { registerCompletion } from './completion';
 import { registerInstantiation } from './instantiation';
 import { registerLint } from './lint';
 import { registerNavigation } from './navigation';
-import { registerPortColors } from './portColors';
+import { registerSettingsPanel } from './settingsPanel';
 import { registerSymbols } from './symbols';
 import { INDEX, initIndex } from './indexer';
 import { insertFsmTemplate } from './fsm';
+import { getConfig } from './config';
 import * as logger from './logger';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -17,7 +18,7 @@ export function activate(context: vscode.ExtensionContext): void {
   INDEX.start();
 
   registerNavigation(context);
-  registerPortColors(context);
+  registerSettingsPanel(context);
   registerSymbols(context);
   registerCompletion(context);
   registerAlignment(context);
@@ -66,7 +67,30 @@ export function activate(context: vscode.ExtensionContext): void {
       logger.info('workspace folders changed, rebuilding index');
       initIndex();
       INDEX.start();
+    }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (
+        e.affectsConfiguration('systemverilog.fileLists') ||
+        e.affectsConfiguration('systemverilog.includeDirs')
+      ) {
+        logger.info('index settings changed, rebuilding index');
+        void INDEX.rebuild();
+      }
     })
+  );
+
+  const listWatcher = vscode.workspace.createFileSystemWatcher('**/*.{f,filelist}');
+  const rebuildIfListed = (): void => {
+    if (getConfig().fileLists.some((l) => l.file && l.base)) {
+      logger.info('filelist changed, rebuilding index');
+      void INDEX.rebuild();
+    }
+  };
+  context.subscriptions.push(
+    listWatcher,
+    listWatcher.onDidCreate(rebuildIfListed),
+    listWatcher.onDidChange(rebuildIfListed),
+    listWatcher.onDidDelete(rebuildIfListed)
   );
   logger.info('SystemVerilog extension ready');
 }

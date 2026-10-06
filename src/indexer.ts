@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import {
   ClassInfo,
   ModuleInfo,
@@ -9,7 +10,8 @@ import {
   parseModule,
   parsePackage,
 } from './parser';
-import { getConfig } from './config';
+import { getConfig, SvConfig } from './config';
+import { FileListSetting, followIncludes, resolveFileList } from './filelist';
 import * as logger from './logger';
 
 export type SymbolKind = 'module' | 'interface' | 'package' | 'class' | 'function' | 'task' | 'macro' | 'typedef';
@@ -27,6 +29,163 @@ interface FileRecord {
   symbols: SymbolEntry[];
 }
 
+export interface FileListValidation {
+  file: string;
+  base: string;
+  listPath: string;
+  basePath: string;
+  listExists: boolean;
+  baseExists: boolean;
+  resolved: number;
+  supported: number;
+  missing: string[];
+  sample: string[];
+  error?: string;
+}
+
+export interface IncludeDirStatus {
+  dir: string;
+  path: string;
+  exists: boolean;
+  isDirectory: boolean;
+}
+
+export interface IncludeDirsValidation {
+  dirs: IncludeDirStatus[];
+  unresolved: { include: string; from: string }[];
+}
+
+function supportedExtensions(cfg: SvConfig, includeHeaders = true): Set<string> {
+  const exts = new Set<string>();
+  for (const e of cfg.vExt) exts.add(e);
+  for (const e of cfg.svExt) exts.add(e);
+  if (includeHeaders) {
+    for (const e of cfg.vhExt) exts.add(e);
+    for (const e of cfg.svhExt) exts.add(e);
+  }
+  return new Set([...exts].map((e) => e.replace(/^\./, '').toLowerCase()));
+}
+
+function resolveWorkspacePath(p: string): string {
+  if (path.isAbsolute(p)) {
+    return p;
+  }
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  return folder ? path.join(folder.uri.fsPath, p) : path.resolve(p);
+}
+
+function readTextSync(p: string): string | null {
+  try {
+    return fs.readFileSync(p, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// Resolve each configured filelist the same way the index does, reporting missing
+// paths so the settings UI can confirm a configuration before saving it.
+export function validateFileLists(entries: FileListSetting[]): FileListValidation[] {
+  const cfg = getConfig();
+  const exts = supportedExtensions(cfg);
+  const globalInc = cfg.includeDirs.map((d) => resolveWorkspacePath(d));
+  const results: FileListValidation[] = [];
+  for (const entry of entries) {
+    const listPath = resolveWorkspacePath(entry.file);
+    const basePath = resolveWorkspacePath(entry.base);
+    const report: FileListValidation = {
+      file: entry.file,
+      base: entry.base,
+      listPath,
+      basePath,
+      listExists: fs.existsSync(listPath),
+      baseExists: fs.existsSync(basePath),
+      resolved: 0,
+      supported: 0,
+      missing: [],
+      sample: [],
+    };
+    if (!report.listExists) {
+      report.error = 'filelist not found';
+      results.push(report);
+      continue;
+    }
+    let paths: string[];
+    try {
+      const { files: listed, incdirs } = resolveFileList(listPath, basePath, readTextSync);
+      paths = followIncludes(listed, [...incdirs, ...globalInc, basePath], readTextSync);
+    } catch (e) {
+      report.error = String(e);
+      results.push(report);
+      continue;
+    }
+    report.resolved = paths.length;
+    for (const p of paths) {
+      if (!exts.has(path.extname(p).slice(1).toLowerCase())) {
+        continue;
+      }
+      report.supported++;
+      if (fs.existsSync(p)) {
+        if (report.sample.length < 5) {
+          report.sample.push(vscode.workspace.asRelativePath(vscode.Uri.file(p)));
+        }
+      } else {
+        report.missing.push(vscode.workspace.asRelativePath(vscode.Uri.file(p)));
+      }
+    }
+    results.push(report);
+  }
+  return results;
+}
+
+// Check the configured include directories (exist / is a directory) and, for the
+// current filelists, list every `` `include `` directive that no search directory
+// could resolve. IO uses the same search order as the index.
+export function validateIncludeDirs(
+  entries: FileListSetting[],
+  includeDirs: string[]
+): IncludeDirsValidation {
+  const dirs: IncludeDirStatus[] = includeDirs.map((dir) => {
+    const p = resolveWorkspacePath(dir);
+    let isDirectory = false;
+    try {
+      isDirectory = fs.statSync(p).isDirectory();
+    } catch {
+      isDirectory = false;
+    }
+    return { dir, path: p, exists: fs.existsSync(p), isDirectory };
+  });
+
+  const globalInc = includeDirs.map((d) => resolveWorkspacePath(d));
+  const unresolved: { include: string; from: string }[] = [];
+  const seen = new Set<string>();
+  for (const entry of entries.filter((l) => l.file && l.base)) {
+    const listPath = resolveWorkspacePath(entry.file);
+    const baseDir = resolveWorkspacePath(entry.base);
+    if (!fs.existsSync(listPath)) {
+      continue;
+    }
+    let listed: string[];
+    let incdirs: string[];
+    try {
+      ({ files: listed, incdirs } = resolveFileList(listPath, baseDir, readTextSync));
+    } catch {
+      continue;
+    }
+    followIncludes(listed, [...incdirs, ...globalInc, baseDir], readTextSync, (include, fromFile) => {
+      const key = `${fromFile}\0${include}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      unresolved.push({
+        include,
+        from: vscode.workspace.asRelativePath(vscode.Uri.file(fromFile)),
+      });
+    });
+  }
+  return { dirs, unresolved };
+}
+
 // Workspace-wide symbol index. The symbol table (`byName`) is built once in the
 // background and kept resident, so navigation lookups are O(1) map reads instead
 // of re-globbing and re-stat'ing every file on each command. File texts are
@@ -36,6 +195,9 @@ export class WorkspaceIndex {
   private byName = new Map<string, SymbolEntry[]>();
   private allFiles: vscode.Uri[] = [];
   private ready: Promise<void> | null = null;
+  // When fileLists are configured the index is limited to the resolved set.
+  private restricted = false;
+  private scope = new Set<string>();
 
   private async stat(uri: vscode.Uri): Promise<number> {
     try {
@@ -106,6 +268,52 @@ export class WorkspaceIndex {
     return vscode.workspace.findFiles('**/*.{v,sv,vh,svh}', '**/{node_modules,.git,out}/**');
   }
 
+  // Resolve the file set to index from the configured filelists. With no usable
+  // entry (missing list or missing base) every supported file is indexed.
+  // `scope` keeps every listed path (even one that does not exist yet) so a file
+  // created later is picked up by the watcher; `files` only holds existing ones.
+  private async collectIndexFiles(): Promise<{
+    files: vscode.Uri[];
+    scope: string[];
+    restricted: boolean;
+  }> {
+    const cfg = getConfig();
+    const entries = cfg.fileLists.filter((l) => l.file && l.base);
+    if (!entries.length) {
+      const files = await this.globFiles();
+      return { files, scope: files.map((f) => f.toString()), restricted: false };
+    }
+    const exts = supportedExtensions(cfg);
+    const globalInc = cfg.includeDirs.map((d) => resolveWorkspacePath(d));
+    const existing = new Map<string, vscode.Uri>();
+    const scope = new Set<string>();
+    for (const entry of entries) {
+      const listPath = resolveWorkspacePath(entry.file);
+      const baseDir = resolveWorkspacePath(entry.base);
+      let paths: string[];
+      try {
+        const { files: listed, incdirs } = resolveFileList(listPath, baseDir, readTextSync);
+        paths = followIncludes(listed, [...incdirs, ...globalInc, baseDir], readTextSync);
+      } catch (e) {
+        logger.warn(`fileList ${entry.file}: ${e}`);
+        continue;
+      }
+      for (const p of paths) {
+        if (!exts.has(path.extname(p).slice(1).toLowerCase())) {
+          continue;
+        }
+        const uri = vscode.Uri.file(p);
+        const key = uri.toString();
+        scope.add(key);
+        if (fs.existsSync(p)) {
+          existing.set(key, uri);
+        }
+      }
+      logger.debug(`fileList ${entry.file}: ${paths.length} path(s)`);
+    }
+    return { files: [...existing.values()], scope: [...scope], restricted: true };
+  }
+
   // Build the index on first use; subsequent calls resolve immediately.
   async ensureIndex(): Promise<void> {
     if (!this.ready) {
@@ -130,7 +338,9 @@ export class WorkspaceIndex {
 
   private async buildIndex(): Promise<void> {
     const t0 = Date.now();
-    const files = await this.globFiles();
+    const { files, scope, restricted } = await this.collectIndexFiles();
+    this.restricted = restricted;
+    this.scope = new Set(scope);
     this.allFiles = files;
     this.byName.clear();
     this.records.clear();
@@ -146,12 +356,17 @@ export class WorkspaceIndex {
         // File may have been removed while scanning; skip it.
       }
     }
-    logger.info(`index built: ${files.length} file(s) in ${Date.now() - t0} ms`);
+    logger.info(
+      `index built: ${files.length} file(s) in ${Date.now() - t0} ms${restricted ? ' (fileList)' : ''}`
+    );
   }
 
   // Re-read a single file from disk and update its symbols.
   async refresh(uri: vscode.Uri): Promise<void> {
     const key = uri.toString();
+    if (this.restricted && !this.scope.has(key)) {
+      return;
+    }
     try {
       const data = await vscode.workspace.fs.readFile(uri);
       const text = Buffer.from(data).toString('utf8');
