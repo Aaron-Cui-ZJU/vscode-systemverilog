@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.1.0 (2026-10-06)
+
+- docs: document port hover colors and configure command
+- Add filelist-based indexing, include search dirs and settings panel
+
+
 ## 1.0.3 (2026-10-05)
 
 - Add CHANGELOG entry for v1.0.2
