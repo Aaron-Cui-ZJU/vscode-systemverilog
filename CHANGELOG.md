@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.1.1 (2026-10-06)
+
+- Add -incfile support to filelists
+
+
 ## 1.1.0 (2026-10-06)
 
 - docs: document port hover colors and configure command
