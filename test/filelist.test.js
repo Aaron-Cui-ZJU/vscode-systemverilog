@@ -25,6 +25,8 @@ const contents = {
     '-v lib.v',
     '-f nested.f',
     '-fjoined.f',
+    '-incfile inc_list.f',
+    '-incfilejoined_list.f',
     '$RTL/c.sv',
     'a.sv \\',
     'dup.sv',
@@ -33,6 +35,8 @@ const contents = {
   ].join('\n'),
   [path.join(base, 'nested.f')]: 'nested.sv\n',
   [path.join(base, 'joined.f')]: 'joined.sv\n',
+  [path.join(base, 'inc_list.f')]: '// header list\ninc_extra.svh\n\nsub/deep.svh\n',
+  [path.join(base, 'joined_list.f')]: 'joined_inc.svh\n',
 };
 
 const incBase = path.join(base, 'inc');
@@ -77,6 +81,9 @@ check(
     path.join(base, 'my file.sv'),
     path.join(base, 'nested.sv'),
     path.join(base, 'joined.sv'),
+    path.join(base, 'inc_extra.svh'),
+    path.join(base, 'sub', 'deep.svh'),
+    path.join(base, 'joined_inc.svh'),
     path.join(base, 'rtl', 'c.sv'),
     path.join(base, 'dup.sv'),
     path.join(base, 'splitpath.sv'),

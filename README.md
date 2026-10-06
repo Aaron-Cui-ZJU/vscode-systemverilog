@@ -84,8 +84,8 @@ namespace (e.g. `systemverilog.clkName`, `systemverilog.autoconnect`,
 `systemverilog.fileLists` limits the workspace index to the files referenced by
 one or more filelists, which speeds up indexing on large projects. Each entry
 pairs a filelist `file` with the `base` directory its paths are resolved against;
-entries support `-f` / `-F` includes, comments, quoted paths, `+incdir+` / `-I`
-search directories and `$VAR` expansion. `` `include `` directives inside the
+entries support `-f` / `-F` includes, `-incfile` source lists, comments, quoted
+paths, `+incdir+` / `-I` search directories and `$VAR` expansion. `` `include `` directives inside the
 listed files are followed too (searching the including file's directory, then
 the include directories, then `base`), so a package header that only includes
 other files still pulls them into the index. Leave the list empty to index the

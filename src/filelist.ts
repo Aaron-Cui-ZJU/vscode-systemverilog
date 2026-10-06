@@ -102,9 +102,10 @@ function logicalLines(text: string): string[] {
 }
 
 // Resolve every file referenced by a filelist (recursively following `-f` / `-F`
-// includes) plus the `+incdir+` / `-I` search directories it declares. Paths
-// inside the list are resolved against `baseDir`. IO is injected so the parser
-// stays testable and host-agnostic.
+// includes, and pulling the plain file paths listed by `-incfile`) plus the
+// `+incdir+` / `-I` search directories it declares. Paths inside the list are
+// resolved against `baseDir`. IO is injected so the parser stays testable and
+// host-agnostic.
 export function resolveFileList(
   entryFile: string,
   baseDir: string,
@@ -119,6 +120,30 @@ export function resolveFileList(
     for (const part of raw.split('+')) {
       if (part) {
         incdirs.add(path.resolve(baseDir, part));
+      }
+    }
+  };
+
+  // `-incfile <list>` points at a file that lists source/header paths (one or
+  // more per line, with comments and blank lines allowed); every referenced
+  // path is added to the compilation set.
+  const addIncFile = (listPath: string): void => {
+    const absList = path.resolve(baseDir, listPath);
+    const text = readText(absList);
+    if (text === null) {
+      return;
+    }
+    for (const rawLine of logicalLines(text)) {
+      const line = stripComment(rawLine).trim();
+      if (!line) {
+        continue;
+      }
+      for (const raw of tokenize(line)) {
+        const p = expandEnv(raw, env);
+        if (!p || p.startsWith('-') || p.startsWith('+')) {
+          continue;
+        }
+        files.add(path.resolve(baseDir, p));
       }
     }
   };
@@ -155,6 +180,22 @@ export function resolveFileList(
         }
         if (/^-f.+/.test(token) || /^-F.+/.test(token)) {
           visit(token.slice(2));
+          continue;
+        }
+        if (token === '-incfile') {
+          const next = tokens[i + 1];
+          if (next !== undefined) {
+            i++;
+            addIncFile(expandEnv(next, env));
+          }
+          continue;
+        }
+        if (token.startsWith('-incfile') && token.length > '-incfile'.length) {
+          let rest = token.slice('-incfile'.length);
+          if (rest.startsWith('=')) {
+            rest = rest.slice(1);
+          }
+          addIncFile(rest);
           continue;
         }
         if (token === '+incdir+') {

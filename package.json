@@ -277,7 +277,7 @@
         "systemverilog.fileLists": {
           "type": "array",
           "default": [],
-          "markdownDescription": "Restrict indexing to files listed in one or more filelists. Each entry pairs a filelist `file` with a `base` directory used to resolve the paths inside it. Supports `-f`/`-F` includes, `//` and `#` comments, backslash line continuation, quoted paths, `+incdir+`/`-I` search directories and `$VAR`/`${VAR}` environment expansion. `` `include `` directives inside the listed files are followed (the including file's directory, then the `+incdir+`/`-I` directories, then `base`). When the list is empty (or `base` is empty), every supported file in the workspace is indexed.",
+          "markdownDescription": "Restrict indexing to files listed in one or more filelists. Each entry pairs a filelist `file` with a `base` directory used to resolve the paths inside it. Supports `-f`/`-F` includes, `-incfile` source lists, `//` and `#` comments, backslash line continuation, quoted paths, `+incdir+`/`-I` search directories and `$VAR`/`${VAR}` environment expansion. `` `include `` directives inside the listed files are followed (the including file's directory, then the `+incdir+`/`-I` directories, then `base`). When the list is empty (or `base` is empty), every supported file in the workspace is indexed.",
           "items": {
             "type": "object",
             "required": [
