@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.0 (2026-10-06)
+
+- Preserve unsaved settings panel edits across tab switches
+- Add Go to Instantiating Module navigation
+
+
 ## 1.1.1 (2026-10-06)
 
 - Add -incfile support to filelists
