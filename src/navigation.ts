@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { TypeInfo, getAllTypeInfo, getTypeInfo, cleanComment, parseModule } from './parser';
 import { INDEX, getWordAt } from './indexer';
 import { findDeclarationLine, findDriver, memberDeclaration, typeInfo } from './lookup';
+import { enclosingModuleName, findInstantiationSites } from './instances';
 import { getConfig } from './config';
 import * as logger from './logger';
 
@@ -31,6 +32,10 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'systemverilog.findInstance',
       logger.command('systemverilog.findInstance', () => findInstance())
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoInstantiator',
+      logger.command('systemverilog.gotoInstantiator', (arg?: unknown) => gotoInstantiator(arg))
     ),
     vscode.commands.registerCommand(
       'systemverilog.gotoBlockBoundary',
@@ -97,6 +102,16 @@ function commandLink(label: string, command: string, arg: unknown): string {
   return `[${label}](command:${command}?${encodeURIComponent(JSON.stringify(arg))})`;
 }
 
+// True when `position` sits on the name of a `module` / `interface` declaration
+// (as opposed to a reference to it elsewhere).
+function isModuleDeclarationName(document: vscode.TextDocument, position: vscode.Position): boolean {
+  // Probe up to the start of the word, not the (possibly mid-word) hover point.
+  const range = document.getWordRangeAtPosition(position, /[A-Za-z_][\w$]*/);
+  const start = range ? range.start : position;
+  const prefix = document.getText(new vscode.Range(new vscode.Position(start.line, 0), start));
+  return /\b(?:module|interface)\s+(?:automatic\s+|static\s+)?$/.test(prefix);
+}
+
 // Build the hover markdown, including a clickable link to the module definition
 // when hovering an instantiation (its instance name or its module type).
 async function buildHover(
@@ -109,8 +124,20 @@ async function buildHover(
   if (modSyms.length) {
     const md = new vscode.MarkdownString();
     md.isTrusted = true;
-    md.appendMarkdown(commandLink('Go to module definition of `' + word + '`', 'systemverilog.gotoModule', { name: word }));
-    md.appendMarkdown(`\n\n_${vscode.workspace.asRelativePath(modSyms[0].uri)}_`);
+    if (isModuleDeclarationName(document, position)) {
+      // On the declaration itself, jumping to the definition would be a no-op,
+      // so offer only the jump to the modules that instantiate it instead.
+      md.appendMarkdown('**' + modSyms[0].kind + '** `' + word + '`');
+      md.appendMarkdown(
+        '\n\n' +
+          commandLink('Go to instantiating module of `' + word + '`', 'systemverilog.gotoInstantiator', {
+            name: word,
+          })
+      );
+    } else {
+      md.appendMarkdown(commandLink('Go to module definition of `' + word + '`', 'systemverilog.gotoModule', { name: word }));
+      md.appendMarkdown(`\n\n_${vscode.workspace.asRelativePath(modSyms[0].uri)}_`);
+    }
     return md;
   }
 
@@ -1028,6 +1055,69 @@ async function findInstance(): Promise<void> {
     language: 'systemverilog',
   });
   await vscode.window.showTextDocument(doc, { preview: false, viewColumn: vscode.ViewColumn.Beside });
+}
+
+// Right-click inside a module: jump to the module(s) that instantiate it. When
+// several modules (or the same module several times) instantiate the current one,
+// list up to five parent-module / instance-name entries to choose from.
+async function gotoInstantiator(arg?: unknown): Promise<void> {
+  let target: string | undefined;
+  if (typeof arg === 'string') {
+    target = arg;
+  } else if (arg && typeof arg === 'object' && typeof (arg as { name?: string }).name === 'string') {
+    target = (arg as { name: string }).name;
+  }
+  if (!target) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+    target = enclosingModuleName(
+      editor.document.getText(),
+      editor.document.offsetAt(editor.selection.active)
+    );
+  }
+  if (!target) {
+    logger.debug('gotoInstantiator: cursor is not inside a module');
+    vscode.window.showInformationMessage('Cursor is not inside a module');
+    return;
+  }
+  const files = await INDEX.getAllFiles();
+  const scanned: { path: string; text: string }[] = [];
+  const uriByPath = new Map<string, vscode.Uri>();
+  for (const uri of files) {
+    scanned.push({ path: uri.fsPath, text: await INDEX.readFile(uri) });
+    uriByPath.set(uri.fsPath, uri);
+  }
+  const sites = findInstantiationSites(scanned, target);
+  if (!sites.length) {
+    logger.info(`gotoInstantiator "${target}": no instantiation found`);
+    vscode.window.showInformationMessage('No module instantiates "' + target + '"');
+    return;
+  }
+  const top = sites.slice(0, 5);
+  let chosen = top[0];
+  if (top.length > 1) {
+    const items = top.map((s) => ({
+      label: s.parent || '(top level)',
+      description: 'instance ' + s.instance,
+      detail: vscode.workspace.asRelativePath(vscode.Uri.file(s.file)) + ':' + (s.line + 1),
+    }));
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: `Modules instantiating ${target}`,
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
+    if (!pick) {
+      return;
+    }
+    chosen = top[items.indexOf(pick)];
+  }
+  const uri = uriByPath.get(chosen.file) ?? vscode.Uri.file(chosen.file);
+  logger.info(
+    `gotoInstantiator "${target}" -> ${vscode.workspace.asRelativePath(uri)}:${chosen.line + 1} (${chosen.parent}.${chosen.instance})`
+  );
+  await gotoMember({ uri: uri.toString(), line: chosen.line });
 }
 
 const OPENERS: Record<string, string> = {

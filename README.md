@@ -23,6 +23,9 @@ Full Verilog / SystemVerilog TextMate grammar, plus language configuration
   assignment, `assign` or sub-module output connection).
 - **Show hierarchy**: open the complete module hierarchy of the current module.
 - **Find instance**: list every place the current module is instantiated.
+- **Go to instantiating module** (right-click inside a module): jump to the
+  module(s) that instantiate it, offering up to five parent-module / instance
+  name entries when there are several.
 - **Move / select block** (`Ctrl+M` / `Ctrl+Shift+M`): move to or select the
   enclosing `begin/end`, `module/endmodule`, `case/endcase`, ... block.
 - Hover provider showing declaration information.
@@ -70,6 +73,7 @@ category (and from the editor context menu).
 | Verilog: Reindent | `Alt+Shift+A` |
 | Verilog: GoTo Driver | `Ctrl+F12` |
 | Verilog: GoTo Declaration | `Shift+F12` |
+| Verilog: Go to Instantiating Module | |
 | (move to block boundary) | `Ctrl+M` |
 | (select block boundary) | `Ctrl+Shift+M` |
 | Verilog: Configure Settings | |
