@@ -126,6 +126,14 @@ npm test
 Consistency of the parser / beautifier port is verified against the test data of
 the original project (17 parser cases and 27 beautifier cases pass).
 
+`npm test` also runs an activation smoke test (`test/activation.test.js`) that
+loads `out/extension.js` with a `vscode` stub while making every bare npm
+specifier unresolvable. This reproduces the published environment: CI packages
+with `vsce publish --no-dependencies`, so **`node_modules` is not shipped**. Any
+turn runtime dependency must therefore be loaded lazily (see
+`src/languageServer.ts`) — a top-level `import` of an npm package other than
+`vscode` will fail this test and block the release.
+
 ## License and attribution
 
 Derived from the Sublime Text SystemVerilog plugin by TheClams, licensed under

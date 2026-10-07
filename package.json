@@ -603,7 +603,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "node test/parser.test.js && node test/beautifier.test.js && node test/filelist.test.js && node test/instances.test.js",
+    "test": "node test/parser.test.js && node test/beautifier.test.js && node test/filelist.test.js && node test/instances.test.js && node test/activation.test.js",
     "changelog": "node scripts/update-changelog.js",
     "release": "node scripts/release.js"
   },
