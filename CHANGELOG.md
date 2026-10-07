@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.4 (2026-10-07)
+
+- Optimize extension icon (256x256, transparent background)
+
+
 ## 1.2.3 (2026-10-07)
 
 - Add activation smoke test guarding against unshipped runtime dependencies
