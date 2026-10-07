@@ -1,11 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import {
-  LanguageClient,
-  LanguageClientOptions,
-  ServerOptions,
-  TransportKind,
-} from 'vscode-languageclient/node';
+import type { LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
 import { getConfig } from './config';
 import * as logger from './logger';
 
@@ -13,7 +8,20 @@ import * as logger from './logger';
 // whose command speaks the protocol over stdio can be plugged in through the
 // `systemverilog.languageServer.*` settings. The defaults target `slang-server`,
 // which reads its own `.slang/server.json` at the workspace root.
+//
+// The `vscode-languageclient` runtime is required lazily (see `requireClient`)
+// rather than imported at the top level: the extension is published with
+// `vsce publish --no-dependencies`, so `node_modules` is not shipped. A
+// top-level import would therefore throw on activation while the LSP feature is
+// disabled. Loading it only when a server is actually started keeps the packaged
+// extension loadable without the dependency.
+type LanguageClient = import('vscode-languageclient/node').LanguageClient;
+
 let client: LanguageClient | null = null;
+
+function requireClient(): typeof import('vscode-languageclient/node') {
+  return require('vscode-languageclient/node');
+}
 
 function firstRoot(): vscode.Uri | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri;
@@ -45,19 +53,20 @@ function buildClient(): LanguageClient | null {
     logger.warn('language server: empty command, not starting');
     return null;
   }
+  const lc = requireClient();
   const root = firstRoot();
   const command = resolveCommand(cfg.languageServerCommand.trim(), root);
   const args = expandArgs(cfg.languageServerArgs, root);
   const options = root ? { cwd: root.fsPath } : undefined;
   const serverOptions: ServerOptions = {
-    run: { command, args, transport: TransportKind.stdio, options },
-    debug: { command, args, transport: TransportKind.stdio, options },
+    run: { command, args, transport: lc.TransportKind.stdio, options },
+    debug: { command, args, transport: lc.TransportKind.stdio, options },
   };
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: 'file', language: 'systemverilog' }],
     outputChannel: logger.getChannel(),
   };
-  const c = new LanguageClient(
+  const c = new lc.LanguageClient(
     'systemverilog',
     'SystemVerilog Language Server',
     serverOptions,
