@@ -86,7 +86,21 @@ function mergePortDirectionColors(v: unknown): Record<string, string> {
   return out;
 }
 
+let cachedConfig: SvConfig | null = null;
+
+export function invalidateConfigCache(): void {
+  cachedConfig = null;
+}
+
 export function getConfig(): SvConfig {
+  if (cachedConfig) {
+    return cachedConfig;
+  }
+  cachedConfig = readConfig();
+  return cachedConfig;
+}
+
+function readConfig(): SvConfig {
   const c = vscode.workspace.getConfiguration('systemverilog');
   const arr = (v: any): string[] => (Array.isArray(v) ? v.map(String) : []);
   const cl = (v: any): CompletionEntry[] =>

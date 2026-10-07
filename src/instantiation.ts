@@ -3,6 +3,7 @@ import { VerilogBeautifier } from './beautifier';
 import { getConfig, SvConfig } from './config';
 import { INDEX } from './indexer';
 import { ModuleInfo, TypeInfo, cleanComment, parseModule } from './parser';
+import { documentModuleInfo } from './documentCache';
 import * as logger from './logger';
 
 interface ConnectInfo {
@@ -66,7 +67,7 @@ function getConnect(
   const wc: Record<string, string> = {};
   const fname = editor.document.fileName.toLowerCase();
   const sigType = fname.endsWith('.v') ? 'wire' : 'logic';
-  const mi = parseModule(cleanComment(editor.document.getText()), '\\w+', false, true);
+  const mi = documentModuleInfo(editor.document, false, true);
   if (!mi) {
     return { decl: '', ac, wc };
   }

@@ -8,7 +8,7 @@ import { registerSettingsPanel } from './settingsPanel';
 import { registerSymbols } from './symbols';
 import { INDEX, initIndex } from './indexer';
 import { insertFsmTemplate } from './fsm';
-import { getConfig } from './config';
+import { getConfig, invalidateConfigCache } from './config';
 import * as logger from './logger';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -69,6 +69,7 @@ export function activate(context: vscode.ExtensionContext): void {
       INDEX.start();
     }),
     vscode.workspace.onDidChangeConfiguration((e) => {
+      invalidateConfigCache();
       if (
         e.affectsConfiguration('systemverilog.fileLists') ||
         e.affectsConfiguration('systemverilog.includeDirs')

@@ -4,10 +4,11 @@ import { getConfig } from './config';
 import { INDEX } from './indexer';
 import { cleanComment, getEnumValues, getTypeInfo, parseModule } from './parser';
 import { caseTemplate } from './completion';
+import { cleanDocument, documentModuleInfo } from './documentCache';
 
 export async function insertFsmTemplate(editor: vscode.TextEditor): Promise<void> {
   const cfg = getConfig();
-  const mi = parseModule(cleanComment(editor.document.getText()), '\\w+', false, false);
+  const mi = documentModuleInfo(editor.document);
   if (!mi) {
     vscode.window.showWarningMessage('No module found in current file');
     return;
@@ -51,7 +52,7 @@ export async function insertFsmTemplate(editor: vscode.TextEditor): Promise<void
   await editor.edit((eb) => eb.insert(insertPos, out));
   // Add state_next declaration next to state if missing
   const docText = editor.document.getText();
-  if (!getTypeInfo(cleanComment(docText), stateNext).type) {
+  if (!getTypeInfo(cleanDocument(editor.document), stateNext).type) {
     const target = ti.type || '';
     const re = new RegExp(target + '[\\s\\S]+?' + sigName);
     const m = docText.match(re);

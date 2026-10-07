@@ -9,6 +9,7 @@ import {
   mergeCompletion,
 } from './config';
 import { INDEX } from './indexer';
+import { cleanDocument, documentAllTypeInfo } from './documentCache';
 import {
   FuncInfo,
   TypeInfo,
@@ -38,13 +39,36 @@ function mostCommon(list: string[]): string {
   return best;
 }
 
+let alwaysCacheKey = '';
+let alwaysCache: [string, string, string] | null = null;
+
 export function getAlwaysTemplate(document: vscode.TextDocument): [string, string, string] {
   const cfg = getConfig();
+  const cacheKey =
+    document.uri.toString() +
+    '@' +
+    document.version +
+    '|' +
+    [
+      cfg.clkName,
+      cfg.rstName,
+      cfg.rstNName,
+      cfg.clkEnName,
+      cfg.alwaysNameAuto,
+      cfg.alwaysCeAuto,
+      cfg.alwaysFfBeginEnd,
+      cfg.alwaysLabel,
+      cfg.alwaysOneCursor,
+      cfg.indentStyle,
+    ].join('\u0001');
+  if (alwaysCache && alwaysCacheKey === cacheKey) {
+    return alwaysCache;
+  }
   let clkName = cfg.clkName;
   let rstName = cfg.rstName;
   let rstNName = cfg.rstNName;
   let clkEnName = cfg.clkEnName;
-  const raw = cleanComment(document.getText());
+  const raw = cleanDocument(document);
   if (cfg.alwaysNameAuto) {
     const pl = Array.from(raw.matchAll(/posedge\s+(\w+)/g)).map((m) => m[1]);
     if (pl.length) {
@@ -127,7 +151,10 @@ export function getAlwaysTemplate(document: vscode.TextDocument): [string, strin
   aL = beautifier.beautifyText(aL);
   const aH = aL.replace(/neg/g, 'pos').split(rstNName).join(rstName).replace(/~/g, '');
   aNr = beautifier.beautifyText(aNr).replace('$1;', '$1');
-  return [aL.slice(7), aH.slice(7), aNr.slice(7)];
+  const result: [string, string, string] = [aL.slice(7), aH.slice(7), aNr.slice(7)];
+  alwaysCacheKey = cacheKey;
+  alwaysCache = result;
+  return result;
 }
 
 function escapeRegExp(s: string): string {
@@ -173,7 +200,7 @@ async function resolveTypeInfo(document: vscode.TextDocument, ti: TypeInfo): Pro
     return ti;
   }
   // Look for a local definition first
-  const local = getTypeInfo(cleanComment(document.getText()), ti.type);
+  const local = getTypeInfo(cleanDocument(document), ti.type);
   if (local && local.type) {
     return local;
   }
@@ -262,13 +289,13 @@ function caseTemplate(document: vscode.TextDocument, sigName: string): Completio
   if (!m) {
     return null;
   }
-  let ti = getTypeInfo(cleanComment(document.getText()), m[1].split('.').pop()!);
+  let ti = getTypeInfo(cleanDocument(document), m[1].split('.').pop()!);
   if (!ti || !ti.type) {
     return null;
   }
   const t0 = ti.type.split(/\s+/)[0];
   if (!['enum', 'logic', 'bit', 'reg', 'wire', 'input', 'output', 'inout'].includes(t0)) {
-    const local = getTypeInfo(cleanComment(document.getText()), ti.type);
+    const local = getTypeInfo(cleanDocument(document), ti.type);
     if (local && local.type) {
       ti = local;
     }
@@ -461,7 +488,7 @@ async function scopeItems(document: vscode.TextDocument, scope: string): Promise
     }
   }
   // enum type
-  const local = getTypeInfo(cleanComment(document.getText()), name);
+  const local = getTypeInfo(cleanDocument(document), name);
   if (local && (local.tag === 'enum' || (local.type || '').split(/\s+/)[0] === 'enum')) {
     return getEnumValues(local.decl || '').map((v) => ({ label: v, detail: 'enum value' }));
   }
@@ -480,7 +507,7 @@ function functionSnippet(fi: FuncInfo): string {
 function modportItems(document: vscode.TextDocument): CompletionItemPlus[] {
   const txt = document.getText();
   const m = txt.match(/modport\s+(\w+)\s*\(/);
-  const signals = getAllTypeInfo(cleanComment(txt), true)
+  const signals = documentAllTypeInfo(document, true)
     .filter((s) => s.tag === 'decl')
     .map((s) => s.name)
     .slice(0, 20);

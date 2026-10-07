@@ -12,6 +12,7 @@ import {
 } from './parser';
 import { getConfig, SvConfig } from './config';
 import { FileListSetting, followIncludes, resolveFileList } from './filelist';
+import { documentModuleInfo } from './documentCache';
 import * as logger from './logger';
 
 export type SymbolKind = 'module' | 'interface' | 'package' | 'class' | 'function' | 'task' | 'macro' | 'typedef';
@@ -27,7 +28,20 @@ interface FileRecord {
   mtime: number;
   text: string;
   symbols: SymbolEntry[];
+  // Time of the last freshness check (mtime stat), used to throttle the disk
+  // verification that catches changes the watcher missed.
+  checkedAt: number;
+  // Lazily populated parse caches, all invalidated together with the record.
+  cleaned?: string;
+  modules?: Map<string, ModuleInfo | null>;
+  packages?: Map<string, TypeInfo[] | null>;
+  classes?: Map<string, ClassInfo | null>;
 }
+
+// A cached file is trusted for this long before its mtime is checked again on a
+// read. Kept short so any externally changed file the watcher missed is picked
+// up almost immediately, while multiple reads in a burst share one stat.
+const READ_CHECK_TTL_MS = 250;
 
 export interface FileListValidation {
   file: string;
@@ -204,7 +218,11 @@ export function validateIncludeDirs(
 export class WorkspaceIndex {
   private records = new Map<string, FileRecord>();
   private byName = new Map<string, SymbolEntry[]>();
+  // Reverse index from file to the symbols it contributed, so re-indexing one
+  // file only touches that file's names instead of scanning the whole table.
+  private fileSymbols = new Map<string, SymbolEntry[]>();
   private allFiles: vscode.Uri[] = [];
+  private fileSet = new Set<string>();
   private ready: Promise<void> | null = null;
   // When fileLists are configured the index is limited to the resolved set.
   private restricted = false;
@@ -220,22 +238,71 @@ export class WorkspaceIndex {
     }
   }
 
+  private async readDiskText(uri: vscode.Uri): Promise<string> {
+    const data = await vscode.workspace.fs.readFile(uri);
+    return Buffer.from(data).toString('utf8');
+  }
+
+  private makeRecord(text: string, mtime: number, symbols: SymbolEntry[]): FileRecord {
+    return { mtime, text, symbols, checkedAt: Date.now() };
+  }
+
+  // Text is served from the resident cache. A record is trusted until the TTL
+  // elapses, then its mtime is compared against disk; only a changed mtime
+  // triggers a re-read. This keeps the watcher as the primary invalidation path
+  // while catching changes it missed, without a stat on every single read.
   async readFile(uri: vscode.Uri): Promise<string> {
     const key = uri.toString();
-    const mtime = await this.stat(uri);
     const rec = this.records.get(key);
-    if (rec && rec.mtime === mtime) {
+    const now = Date.now();
+    if (rec && now - rec.checkedAt < READ_CHECK_TTL_MS) {
       return rec.text;
     }
-    const data = await vscode.workspace.fs.readFile(uri);
-    const text = Buffer.from(data).toString('utf8');
-    logger.debug(`index: read ${uri.fsPath} (${text.length} chars)`);
-    this.records.set(key, {
-      mtime,
-      text,
-      symbols: rec ? rec.symbols : [],
-    });
+    if (rec) {
+      const mtime = await this.stat(uri);
+      if (mtime === rec.mtime) {
+        rec.checkedAt = now;
+        return rec.text;
+      }
+      const text = await this.readDiskText(uri);
+      if (logger.isDebug()) {
+        logger.debug(`index: re-read ${uri.fsPath} (${text.length} chars)`);
+      }
+      this.records.set(key, this.makeRecord(text, mtime, rec.symbols));
+      return text;
+    }
+    const text = await this.readDiskText(uri);
+    const mtime = await this.stat(uri);
+    if (logger.isDebug()) {
+      logger.debug(`index: read ${uri.fsPath} (${text.length} chars)`);
+    }
+    this.records.set(key, this.makeRecord(text, mtime, []));
     return text;
+  }
+
+  // Return the cached record for `uri`, reading it from disk on first use.
+  private async ensureRecord(uri: vscode.Uri): Promise<FileRecord | null> {
+    const key = uri.toString();
+    const rec = this.records.get(key);
+    if (rec) {
+      return rec;
+    }
+    try {
+      const text = await this.readDiskText(uri);
+      const mtime = await this.stat(uri);
+      const r = this.makeRecord(text, mtime, []);
+      this.records.set(key, r);
+      return r;
+    } catch {
+      return null;
+    }
+  }
+
+  private static cleanedText(rec: FileRecord): string {
+    if (rec.cleaned === undefined) {
+      rec.cleaned = cleanComment(rec.text);
+    }
+    return rec.cleaned;
   }
 
   // Drop the cached file text. Symbols stay valid (they describe the on-disk
@@ -244,21 +311,38 @@ export class WorkspaceIndex {
     this.records.delete(uri.toString());
   }
 
-  // Remove every symbol entry that points at `uri`.
+  // Remove every symbol entry that points at `uri` using the reverse index, so
+  // the cost is proportional to this file's symbols rather than the whole table.
   private dropSymbols(uri: vscode.Uri): void {
     const key = uri.toString();
-    for (const [name, entries] of this.byName) {
+    const owned = this.fileSymbols.get(key);
+    if (!owned) {
+      return;
+    }
+    for (const s of owned) {
+      const entries = this.byName.get(s.name);
+      if (!entries) {
+        continue;
+      }
       const kept = entries.filter((e) => e.uri.toString() !== key);
       if (kept.length) {
-        this.byName.set(name, kept);
+        this.byName.set(s.name, kept);
       } else {
-        this.byName.delete(name);
+        this.byName.delete(s.name);
       }
     }
+    this.fileSymbols.delete(key);
   }
 
-  private addSymbols(symbols: SymbolEntry[]): void {
+  private addSymbols(uri: vscode.Uri, symbols: SymbolEntry[]): void {
+    const key = uri.toString();
+    let owned = this.fileSymbols.get(key);
+    if (!owned) {
+      owned = [];
+      this.fileSymbols.set(key, owned);
+    }
     for (const s of symbols) {
+      owned.push(s);
       const list = this.byName.get(s.name);
       if (list) {
         list.push(s);
@@ -272,7 +356,7 @@ export class WorkspaceIndex {
   private indexText(uri: vscode.Uri, text: string): SymbolEntry[] {
     this.dropSymbols(uri);
     const symbols = this.scanSymbols(uri, text);
-    this.addSymbols(symbols);
+    this.addSymbols(uri, symbols);
     return symbols;
   }
 
@@ -351,7 +435,9 @@ export class WorkspaceIndex {
   rebuild(): Promise<void> {
     this.records.clear();
     this.byName.clear();
+    this.fileSymbols.clear();
     this.allFiles = [];
+    this.fileSet.clear();
     this.ready = this.buildIndex();
     return this.ready;
   }
@@ -362,20 +448,40 @@ export class WorkspaceIndex {
     this.restricted = restricted;
     this.scope = new Set(scope);
     this.scopeVia = via;
-    this.allFiles = files;
+    this.allFiles = files.slice();
+    this.fileSet = new Set(this.allFiles.map((f) => f.toString()));
     this.byName.clear();
+    this.fileSymbols.clear();
     this.records.clear();
-    for (const uri of files) {
-      try {
-        const data = await vscode.workspace.fs.readFile(uri);
-        const text = Buffer.from(data).toString('utf8');
-        const mtime = await this.stat(uri);
-        const symbols = this.scanSymbols(uri, text);
-        this.addSymbols(symbols);
-        this.records.set(uri.toString(), { mtime, text, symbols });
-      } catch {
-        // File may have been removed while scanning; skip it.
+    // Read/scan files in bounded batches so a large workspace does not wait on
+    // one file at a time while still limiting concurrent filesystem handles.
+    // Insertion into the name table happens afterwards, in file order, so the
+    // resulting symbol ordering is identical to a sequential build.
+    const CONCURRENCY = 16;
+    const built: (FileRecord | null)[] = new Array(files.length).fill(null);
+    for (let i = 0; i < files.length; i += CONCURRENCY) {
+      const batch = files.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        batch.map(async (uri, j) => {
+          try {
+            const text = await this.readDiskText(uri);
+            const mtime = await this.stat(uri);
+            const symbols = this.scanSymbols(uri, text);
+            built[i + j] = this.makeRecord(text, mtime, symbols);
+          } catch {
+            // File may have been removed while scanning; skip it.
+          }
+        })
+      );
+    }
+    for (let k = 0; k < files.length; k++) {
+      const rec = built[k];
+      if (!rec) {
+        continue;
       }
+      const uri = files[k];
+      this.addSymbols(uri, rec.symbols);
+      this.records.set(uri.toString(), rec);
     }
     logger.info(
       `index built: ${files.length} file(s) in ${Date.now() - t0} ms${restricted ? ' (fileList)' : ''}`
@@ -389,13 +495,13 @@ export class WorkspaceIndex {
       return;
     }
     try {
-      const data = await vscode.workspace.fs.readFile(uri);
-      const text = Buffer.from(data).toString('utf8');
+      const text = await this.readDiskText(uri);
       const mtime = await this.stat(uri);
       const symbols = this.indexText(uri, text);
-      this.records.set(key, { mtime, text, symbols });
-      if (!this.allFiles.some((u) => u.toString() === key)) {
+      this.records.set(key, this.makeRecord(text, mtime, symbols));
+      if (!this.fileSet.has(key)) {
         this.allFiles.push(uri);
+        this.fileSet.add(key);
       }
     } catch {
       this.remove(uri);
@@ -406,7 +512,11 @@ export class WorkspaceIndex {
     const key = uri.toString();
     this.records.delete(key);
     this.dropSymbols(uri);
-    this.allFiles = this.allFiles.filter((u) => u.toString() !== key);
+    const idx = this.allFiles.findIndex((u) => u.toString() === key);
+    if (idx >= 0) {
+      this.allFiles.splice(idx, 1);
+    }
+    this.fileSet.delete(key);
   }
 
   // Report whether a path is part of the current index and, when filelists are
@@ -418,9 +528,7 @@ export class WorkspaceIndex {
     const key = uri.toString();
     const exts = supportedExtensions(getConfig());
     const supported = exts.has(path.extname(abs).slice(1).toLowerCase());
-    const indexed = this.restricted
-      ? this.scope.has(key)
-      : this.allFiles.some((u) => u.toString() === key);
+    const indexed = this.restricted ? this.scope.has(key) : this.fileSet.has(key);
     return {
       input,
       path: abs,
@@ -500,7 +608,9 @@ export class WorkspaceIndex {
       }
     }
     const filtered = this.allFiles.filter((u) => exts.has(path.extname(u.fsPath).slice(1).toLowerCase()));
-    logger.debug(`index: ${filtered.length} file(s) matched (headers=${includeHeaders})`);
+    if (logger.isDebug()) {
+      logger.debug(`index: ${filtered.length} file(s) matched (headers=${includeHeaders})`);
+    }
     return filtered;
   }
 
@@ -514,7 +624,7 @@ export class WorkspaceIndex {
     const text = await this.readFile(uri);
     const symbols = this.indexText(uri, text);
     const mtime = await this.stat(uri);
-    this.records.set(key, { mtime, text, symbols });
+    this.records.set(key, this.makeRecord(text, mtime, symbols));
     return symbols;
   }
 
@@ -522,27 +632,43 @@ export class WorkspaceIndex {
     await this.ensureIndex();
     const entries = this.byName.get(name);
     if (!entries || !entries.length) {
-      logger.debug(`findSymbols "${name}": 0 match(es)`);
+      if (logger.isDebug()) {
+        logger.debug(`findSymbols "${name}": 0 match(es)`);
+      }
       return [];
     }
     const out = kinds ? entries.filter((e) => kinds.includes(e.kind)) : entries.slice();
     // Prefer the current file first
     const active = vscode.window.activeTextEditor?.document.uri.toString();
-    if (active) {
+    if (active && out.length > 1) {
       out.sort((a, b) => (b.uri.toString() === active ? 1 : 0) - (a.uri.toString() === active ? 1 : 0));
     }
-    logger.debug(`findSymbols "${name}": ${out.length} match(es)`);
+    if (logger.isDebug()) {
+      logger.debug(`findSymbols "${name}": ${out.length} match(es)`);
+    }
     return out;
   }
 
   async lookupModule(name: string): Promise<{ info: ModuleInfo; uri: vscode.Uri; text: string } | null> {
     const syms = await this.findSymbols(name, ['module', 'interface']);
     for (const s of syms) {
-      const text = await this.readFile(s.uri);
-      const info = parseModule(cleanComment(text), name, false, true);
+      const rec = await this.ensureRecord(s.uri);
+      if (!rec) {
+        continue;
+      }
+      const cache = (rec.modules ??= new Map<string, ModuleInfo | null>());
+      let info: ModuleInfo | null;
+      if (cache.has(name)) {
+        info = cache.get(name)!;
+      } else {
+        info = parseModule(WorkspaceIndex.cleanedText(rec), name, false, true);
+        cache.set(name, info);
+      }
       if (info) {
-        logger.debug(`lookupModule "${name}" -> ${s.uri.fsPath}`);
-        return { info, uri: s.uri, text };
+        if (logger.isDebug()) {
+          logger.debug(`lookupModule "${name}" -> ${s.uri.fsPath}`);
+        }
+        return { info, uri: s.uri, text: rec.text };
       }
     }
     logger.debug(`lookupModule "${name}": not found`);
@@ -552,8 +678,18 @@ export class WorkspaceIndex {
   async lookupPackage(name: string): Promise<TypeInfo[] | null> {
     const syms = await this.findSymbols(name, ['package']);
     for (const s of syms) {
-      const text = await this.readFile(s.uri);
-      const members = parsePackage(cleanComment(text), name);
+      const rec = await this.ensureRecord(s.uri);
+      if (!rec) {
+        continue;
+      }
+      const cache = (rec.packages ??= new Map<string, TypeInfo[] | null>());
+      let members: TypeInfo[] | null;
+      if (cache.has(name)) {
+        members = cache.get(name)!;
+      } else {
+        members = parsePackage(WorkspaceIndex.cleanedText(rec), name);
+        cache.set(name, members);
+      }
       if (members) {
         return members;
       }
@@ -564,10 +700,20 @@ export class WorkspaceIndex {
   async lookupClass(name: string): Promise<{ info: ClassInfo; uri: vscode.Uri; text: string } | null> {
     const syms = await this.findSymbols(name, ['class']);
     for (const s of syms) {
-      const text = await this.readFile(s.uri);
-      const info = parseClass(cleanComment(text), name);
+      const rec = await this.ensureRecord(s.uri);
+      if (!rec) {
+        continue;
+      }
+      const cache = (rec.classes ??= new Map<string, ClassInfo | null>());
+      let info: ClassInfo | null;
+      if (cache.has(name)) {
+        info = cache.get(name)!;
+      } else {
+        info = parseClass(WorkspaceIndex.cleanedText(rec), name);
+        cache.set(name, info);
+      }
       if (info) {
-        return { info, uri: s.uri, text };
+        return { info, uri: s.uri, text: rec.text };
       }
     }
     return null;
@@ -625,6 +771,5 @@ export function getWordAt(document: vscode.TextDocument, position: vscode.Positi
 }
 
 export function getModuleInfoForDocument(document: vscode.TextDocument): ModuleInfo | null {
-  const text = cleanComment(document.getText());
-  return parseModule(text, '\\w+', false, false);
+  return documentModuleInfo(document);
 }

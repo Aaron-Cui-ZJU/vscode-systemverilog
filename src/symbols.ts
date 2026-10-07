@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { cleanComment, parseModule } from './parser';
+import { documentModuleInfo } from './documentCache';
 import * as logger from './logger';
 
 function esc(s: string): string {
@@ -50,8 +50,7 @@ function moduleRange(document: vscode.TextDocument, name: string): vscode.Range 
 
 // Outline / Go to Symbol (Ctrl+Shift+O): only the module and its instantiations.
 function moduleSymbols(document: vscode.TextDocument): vscode.DocumentSymbol[] {
-  const text = document.getText();
-  const mi = parseModule(cleanComment(text), '\\w+', false, false);
+  const mi = documentModuleInfo(document);
   if (!mi) {
     return [];
   }
@@ -80,7 +79,7 @@ async function showInstances(): Promise<void> {
     return;
   }
   const document = editor.document;
-  const mi = parseModule(cleanComment(document.getText()), '\\w+', false, false);
+  const mi = documentModuleInfo(document);
   if (!mi || !mi.inst.length) {
     logger.debug('showInstances: no instance found');
     vscode.window.showInformationMessage('No module instance found in the current module');

@@ -3,13 +3,11 @@ import {
   ClassInfo,
   FuncInfo,
   TypeInfo,
-  cleanComment,
   enclosingClassScope,
-  getAllTypeInfo,
   getTypeInfo,
-  parseModule,
 } from './parser';
 import { INDEX } from './indexer';
+import { cleanDocument, documentAllTypeInfo, documentModuleInfo } from './documentCache';
 
 const NOT_FOUND: TypeInfo = {
   decl: null,
@@ -23,7 +21,7 @@ const NOT_FOUND: TypeInfo = {
 
 // Retrieve type info for a variable, falling back to imported packages.
 export async function typeInfo(document: vscode.TextDocument, name: string): Promise<TypeInfo> {
-  const text = cleanComment(document.getText());
+  const text = cleanDocument(document);
   let ti = getTypeInfo(text, name);
   if (ti && ti.type) {
     return ti;
@@ -167,11 +165,11 @@ export async function memberDeclaration(
 
 // Find all signals declared in the current file (used for linting/completion).
 export function signalsInFile(document: vscode.TextDocument): TypeInfo[] {
-  return getAllTypeInfo(cleanComment(document.getText()), true);
+  return documentAllTypeInfo(document, true);
 }
 
 export function moduleInfo(document: vscode.TextDocument) {
-  return parseModule(cleanComment(document.getText()), '\\w+', false, false);
+  return documentModuleInfo(document);
 }
 
 // Keywords that introduce a declaration. Used by findDeclarationLine to tell a
@@ -229,6 +227,52 @@ export interface DriverResult {
   detail: string;
 }
 
+// 0-based line/character of an absolute offset in `text`.
+function offsetToLineChar(text: string, offset: number): { line: number; character: number } {
+  let line = 0;
+  let lineStart = 0;
+  for (let i = 0; i < offset; i++) {
+    if (text[i] === '\n') {
+      line++;
+      lineStart = i + 1;
+    }
+  }
+  return { line, character: offset - lineStart };
+}
+
+// True when `name` at `start` is written by an assignment (an lvalue). Handles a
+// plain target (`sig`, `sig[3:0]`, `mem[i]`) and an element of a concatenation
+// target (`{a, b, sig} = ...`), including one split across several lines.
+function isAssignmentTarget(text: string, start: number, length: number): boolean {
+  const before = start > 0 ? text[start - 1] : '';
+  if (before && /[\w.]/.test(before)) {
+    return false;
+  }
+  const tail = text.slice(start + length);
+  // plain target: optional bit/part selects, then `=` or `<=` (but not `==`).
+  if (/^\s*(?:\[[^\]]*\]\s*)*(?:<=|=)(?!=)/.test(tail)) {
+    return true;
+  }
+  // concatenation element: some closing `}` before the statement end is followed
+  // by `=`/`<=`, and the name sits after an unmatched `{` in the statement.
+  const semi = tail.indexOf(';');
+  const between = semi >= 0 ? tail.slice(0, semi) : tail;
+  let close = -1;
+  let closesTarget = false;
+  while ((close = between.indexOf('}', close + 1)) >= 0) {
+    if (/^\s*(?:<=|=)(?!=)/.test(between.slice(close + 1))) {
+      closesTarget = true;
+      break;
+    }
+  }
+  if (!closesTarget) {
+    return false;
+  }
+  const stmtStart = text.lastIndexOf(';', start) + 1;
+  const head = text.slice(stmtStart, start);
+  return head.lastIndexOf('{') > head.lastIndexOf('}');
+}
+
 // Heuristic driver search for a signal inside the given text.
 export function findDriver(text: string, name: string): DriverResult | null {
   const lines = text.split(/\r?\n/);
@@ -240,22 +284,14 @@ export function findDriver(text: string, name: string): DriverResult | null {
       return { line: i, character: lines[i].search(new RegExp('\\b' + e + '\\b')), detail: 'output port' };
     }
   }
-  // procedural / continuous assignment (LHS)
-  re = new RegExp('(?:^|[^\\w.])(?:' + e + ')\\s*(?:<=|=)[^=]');
-  for (let i = 0; i < lines.length; i++) {
-    if (re.test(lines[i])) {
-      return {
-        line: i,
-        character: lines[i].search(new RegExp('\\b' + e + '\\b')),
-        detail: 'assignment',
-      };
-    }
-  }
-  // assign statement
-  re = new RegExp('\\bassign\\b[^;\\n]*\\b' + e + '\\b\\s*=');
-  for (let i = 0; i < lines.length; i++) {
-    if (re.test(lines[i])) {
-      return { line: i, character: lines[i].search(new RegExp('\\b' + e + '\\b')), detail: 'assign' };
+  // assignment target (procedural or continuous), including a signal inside a
+  // concatenation lvalue such as `{a, b, sig} = expr;`.
+  const nameRe = new RegExp('\\b' + e + '\\b', 'g');
+  let occ: RegExpExecArray | null;
+  while ((occ = nameRe.exec(text)) !== null) {
+    if (isAssignmentTarget(text, occ.index, name.length)) {
+      const pos = offsetToLineChar(text, occ.index);
+      return { line: pos.line, character: pos.character, detail: 'assignment' };
     }
   }
   // connection to an output of a submodule: .name(...) is the port; the driver is

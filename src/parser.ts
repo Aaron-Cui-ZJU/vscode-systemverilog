@@ -96,87 +96,31 @@ export function cleanComment(text: string): string {
 
 // Replace the characters of comments and string literals with spaces while
 // preserving the length and line breaks of `text`, so offsets stay valid for a
-// token scan that must ignore commented-out code.
+// token scan that must ignore commented-out code. The patterns mirror the state
+// machine they replaced: line comments end at `\n`, block comments run to the
+// closing `*/` (or the end of input when unterminated), and string literals
+// honour backslash escapes (a trailing lone backslash is masked too).
+const reMaskComments = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\[\s\S]|[^\\"])*(?:"|\\$|$)/g;
+
 export function maskComments(text: string): string {
-  const chars = text.split('');
-  const n = text.length;
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to; k++) {
-      if (chars[k] !== '\n' && chars[k] !== '\r') {
-        chars[k] = ' ';
-      }
-    }
-  };
-  let state: 'code' | 'line' | 'block' | 'string' = 'code';
-  let start = 0;
-  let i = 0;
-  while (i < n) {
-    const c = text[i];
-    const nxt = i + 1 < n ? text[i + 1] : '';
-    if (state === 'code') {
-      if (c === '/' && nxt === '/') {
-        state = 'line';
-        start = i;
-        i += 2;
-        continue;
-      }
-      if (c === '/' && nxt === '*') {
-        state = 'block';
-        start = i;
-        i += 2;
-        continue;
-      }
-      if (c === '"') {
-        state = 'string';
-        start = i;
-        i += 1;
-        continue;
-      }
-    } else if (state === 'line') {
-      if (c === '\n') {
-        blank(start, i);
-        state = 'code';
-      }
-    } else if (state === 'block') {
-      if (c === '*' && nxt === '/') {
-        blank(start, i + 2);
-        state = 'code';
-        i += 2;
-        continue;
-      }
-    } else if (state === 'string') {
-      if (c === '\\') {
-        i += 2;
-        continue;
-      }
-      if (c === '"') {
-        blank(start, i + 1);
-        state = 'code';
-      }
-    }
-    i += 1;
-  }
-  if (state !== 'code') {
-    blank(start, n);
-  }
-  return chars.join('');
+  return text.replace(reMaskComments, (match) => match.replace(/[^\r\n]/g, ' '));
 }
 
 // Name of the innermost class whose body contains `offset`, or null. Forward
 // declarations (`typedef class Foo;`) are ignored.
 export function enclosingClassName(text: string, offset: number): string | null {
   const masked = maskComments(text);
-  const re = /\bclass\s+([A-Za-z_]\w*)|\bendclass\b/g;
+  const re = /(\btypedef\s*)?\bclass\s+([A-Za-z_]\w*)|\bendclass\b/g;
   const stack: { name: string; start: number }[] = [];
   const spans: { name: string; start: number; end: number }[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked)) !== null) {
-    if (m[1]) {
-      const prefix = masked.slice(0, m.index);
-      if (/\btypedef\s*$/.test(prefix)) {
+    if (m[2] !== undefined) {
+      if (m[1]) {
+        // Forward declaration (`typedef class Foo;`).
         continue;
       }
-      stack.push({ name: m[1], start: m.index });
+      stack.push({ name: m[2], start: m.index });
     } else if (stack.length) {
       const open = stack.pop()!;
       spans.push({ name: open.name, start: open.start, end: m.index + m[0].length });

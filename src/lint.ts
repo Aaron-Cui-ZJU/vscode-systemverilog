@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { INDEX } from './indexer';
-import { cleanComment, getEnumValues, parseModule } from './parser';
+import { getEnumValues } from './parser';
+import { cleanDocument, documentModuleInfo } from './documentCache';
 import * as logger from './logger';
 
 function signalNames(document: vscode.TextDocument) {
-  const txt = cleanComment(document.getText());
-  const mi = parseModule(txt, '\\w+', false, false);
+  const txt = cleanDocument(document);
+  const mi = documentModuleInfo(document);
   return { txt, mi };
 }
 

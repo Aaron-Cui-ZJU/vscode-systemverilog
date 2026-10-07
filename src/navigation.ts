@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
-import { TypeInfo, getAllTypeInfo, getTypeInfo, cleanComment, parseModule } from './parser';
+import { TypeInfo, getAllTypeInfo, getTypeInfo } from './parser';
 import { INDEX, getWordAt } from './indexer';
+import { cleanDocument, documentModuleInfo } from './documentCache';
 import { findDeclarationLine, findDriver, memberDeclaration, typeInfo } from './lookup';
 import { enclosingModuleName, findInstantiationSites } from './instances';
 import { getConfig } from './config';
@@ -153,7 +154,7 @@ async function buildHover(
   }
 
   // 2) Instance name: resolve the instantiated module from the current file.
-  const mi = parseModule(cleanComment(document.getText()), '\\w+', false, false);
+  const mi = documentModuleInfo(document);
   let instanceType: string | null = null;
   if (mi) {
     const inst = mi.inst.find((i) => i.name === word);
@@ -543,7 +544,7 @@ async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promi
   if (!moduleName) {
     const editor = vscode.window.activeTextEditor;
     if (editor) {
-      const mi = parseModule(cleanComment(editor.document.getText()), '\\w+', false, false);
+      const mi = documentModuleInfo(editor.document);
       moduleName = mi ? mi.name : undefined;
     }
   }
@@ -593,7 +594,7 @@ async function resolveSubmoduleDriver(
   signal: string
 ): Promise<SubmoduleDriver | null> {
   const text = document.getText();
-  const mi = parseModule(cleanComment(text), '\\w+', false, false);
+  const mi = documentModuleInfo(document);
   if (!mi) {
     return null;
   }
@@ -870,7 +871,7 @@ async function showType(): Promise<void> {
   let ti = await typeInfo(editor.document, word);
   // If the word is a member access (X.word), try to resolve through struct/enum too.
   if (!ti || !ti.type) {
-    const alt = getTypeInfo(cleanComment(text), word);
+    const alt = getTypeInfo(cleanDocument(editor.document), word);
     if (alt && alt.type) {
       ti = alt;
     }
@@ -983,7 +984,7 @@ async function showHierarchy(): Promise<void> {
   if (!editor) {
     return;
   }
-  const mi = parseModule(cleanComment(editor.document.getText()), '\\w+', false, false);
+  const mi = documentModuleInfo(editor.document);
   if (!mi) {
     logger.warn('showHierarchy: no module found in current file');
     vscode.window.showWarningMessage('No module found in current file');
@@ -1024,7 +1025,7 @@ async function findInstance(): Promise<void> {
     return;
   }
   let name = selectedOrWord(editor);
-  const mi = parseModule(cleanComment(editor.document.getText()), '\\w+', false, false);
+  const mi = documentModuleInfo(editor.document);
   if (!name && mi) {
     name = mi.name;
   }
