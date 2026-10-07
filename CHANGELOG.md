@@ -1,5 +1,11 @@
 # Change Log
 
+## 1.2.3 (2026-10-07)
+
+- Add activation smoke test guarding against unshipped runtime dependencies
+- Update extension icon
+
+
 ## 1.2.2 (2026-10-07)
 
 - Load vscode-languageclient lazily so the published extension activates without it

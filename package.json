@@ -2,7 +2,7 @@
   "name": "vscode-systemverilog",
   "displayName": "SystemVerilog",
   "description": "SystemVerilog and Verilog language support: highlighting, navigation, completion, alignment, instantiation and linting. Port of the Sublime Text SystemVerilog plugin.",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "publisher": "AaronCui",
   "license": "Apache-2.0",
   "icon": "images/icon.png",
