@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.2 (2026-10-07)
+
+- Load vscode-languageclient lazily so the published extension activates without it
+
+
 ## 1.2.1 (2026-10-07)
 
 - Add indexed-file check to the settings panel
