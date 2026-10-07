@@ -1,5 +1,12 @@
 # Change Log
 
+## 1.2.1 (2026-10-07)
+
+- Add indexed-file check to the settings panel
+- Speed up indexing and parsing, fix concatenation driver lookup
+- Add disabled language-server integration; fix concatenation driver in port hover; serve verilog language id
+
+
 ## 1.2.0 (2026-10-06)
 
 - Preserve unsaved settings panel edits across tab switches
