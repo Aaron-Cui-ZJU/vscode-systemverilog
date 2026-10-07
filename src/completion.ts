@@ -9,6 +9,7 @@ import {
   mergeCompletion,
 } from './config';
 import { INDEX } from './indexer';
+import { serverProvidesCompletion } from './languageServer';
 import { cleanDocument, documentAllTypeInfo } from './documentCache';
 import {
   FuncInfo,
@@ -327,6 +328,12 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
       } else if (/[.`:$]/.test(beforePrefix.slice(-1))) {
         prevSym = beforePrefix.slice(-1);
       }
+      if (cfg.languageServerEnabled && serverProvidesCompletion() && (prevSym === '.' || prevSym === '::')) {
+        // Member / scope completion depends on cross-file resolution; when the
+        // language server advertises completion it owns these, so return
+        // undefined and keep only the local snippet completions below.
+        return undefined;
+      }
       if (prevSym === '.') {
         const dotIdx = before.lastIndexOf('.');
         const objM = before.slice(0, dotIdx).match(/([\w$]+(?:\.[\w$]+)*)$/);
@@ -385,7 +392,7 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
     },
   };
   context.subscriptions.push(
-    vscode.languages.registerCompletionItemProvider({ language: 'systemverilog' }, provider, '.', '$', '`', ':', '{', ',')
+    vscode.languages.registerCompletionItemProvider([{ language: 'systemverilog' }, { language: 'verilog' }], provider, '.', '$', '`', ':', '{', ',')
   );
 }
 

@@ -53,6 +53,10 @@ export interface SvConfig {
   disableAutocomplete: boolean;
   debug: boolean;
   hierarchyNewWindow: boolean;
+  languageServerEnabled: boolean;
+  languageServerCommand: string;
+  languageServerArgs: string[];
+  languageServerSyncConfig: boolean;
   completionSystemtask: CompletionEntry[];
   completionSystemtaskUser: CompletionEntry[];
   completionTick: CompletionEntry[];
@@ -166,6 +170,16 @@ function readConfig(): SvConfig {
     disableAutocomplete: c.get('disableAutocomplete', false),
     debug: c.get('debug', false),
     hierarchyNewWindow: c.get('hierarchyNewWindow', false),
+    // The LSP integration (src/languageServer.ts, src/slangConfig.ts) is kept in
+    // source for future development but disabled: it needs the whole design to
+    // compile in an external language server, which projects that depend on
+    // encrypted/vendor UVM (e.g. Cadence `pragma protect`) cannot satisfy. The
+    // enabling settings are no longer contributed, and `enabled` is forced off so
+    // a stale user setting cannot turn it on.
+    languageServerEnabled: false,
+    languageServerCommand: c.get('languageServer.command', 'slang-server'),
+    languageServerArgs: arr(c.get('languageServer.args')),
+    languageServerSyncConfig: false,
     completionSystemtask: cl(c.get('completionSystemtask')),
     completionSystemtaskUser: cl(c.get('completionSystemtaskUser')),
     completionTick: cl(c.get('completionTick')),

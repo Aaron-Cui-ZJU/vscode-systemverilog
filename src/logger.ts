@@ -62,6 +62,11 @@ export function show(): void {
   ensure().show(true);
 }
 
+// Shared output channel, used by the language client for its trace/log output.
+export function getChannel(): vscode.OutputChannel {
+  return ensure();
+}
+
 export function isDebug(): boolean {
   return debugEnabled;
 }

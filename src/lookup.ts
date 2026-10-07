@@ -243,7 +243,7 @@ function offsetToLineChar(text: string, offset: number): { line: number; charact
 // True when `name` at `start` is written by an assignment (an lvalue). Handles a
 // plain target (`sig`, `sig[3:0]`, `mem[i]`) and an element of a concatenation
 // target (`{a, b, sig} = ...`), including one split across several lines.
-function isAssignmentTarget(text: string, start: number, length: number): boolean {
+export function isAssignmentTarget(text: string, start: number, length: number): boolean {
   const before = start > 0 ? text[start - 1] : '';
   if (before && /[\w.]/.test(before)) {
     return false;
@@ -277,21 +277,22 @@ function isAssignmentTarget(text: string, start: number, length: number): boolea
 export function findDriver(text: string, name: string): DriverResult | null {
   const lines = text.split(/\r?\n/);
   const e = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  // output port declaration
-  let re = new RegExp('^[ \\t]*output\\b[^;\\n]*\\b' + e + '\\b');
-  for (let i = 0; i < lines.length; i++) {
-    if (re.test(lines[i])) {
-      return { line: i, character: lines[i].search(new RegExp('\\b' + e + '\\b')), detail: 'output port' };
-    }
-  }
   // assignment target (procedural or continuous), including a signal inside a
-  // concatenation lvalue such as `{a, b, sig} = expr;`.
+  // concatenation lvalue such as `{a, b, sig} = expr;`. Preferred over the port
+  // declaration: for an output port the driver is the assignment, not the port.
   const nameRe = new RegExp('\\b' + e + '\\b', 'g');
   let occ: RegExpExecArray | null;
   while ((occ = nameRe.exec(text)) !== null) {
     if (isAssignmentTarget(text, occ.index, name.length)) {
       const pos = offsetToLineChar(text, occ.index);
       return { line: pos.line, character: pos.character, detail: 'assignment' };
+    }
+  }
+  // output port declaration (fallback when the port has no local assignment).
+  let re = new RegExp('^[ \\t]*output\\b[^;\\n]*\\b' + e + '\\b');
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) {
+      return { line: i, character: lines[i].search(new RegExp('\\b' + e + '\\b')), detail: 'output port' };
     }
   }
   // connection to an output of a submodule: .name(...) is the port; the driver is

@@ -2,9 +2,10 @@ import * as vscode from 'vscode';
 import { TypeInfo, getAllTypeInfo, getTypeInfo } from './parser';
 import { INDEX, getWordAt } from './indexer';
 import { cleanDocument, documentModuleInfo } from './documentCache';
-import { findDeclarationLine, findDriver, memberDeclaration, typeInfo } from './lookup';
+import { findDeclarationLine, findDriver, isAssignmentTarget, memberDeclaration, typeInfo } from './lookup';
 import { enclosingModuleName, findInstantiationSites } from './instances';
 import { getConfig } from './config';
+import { serverProvidesHover } from './languageServer';
 import * as logger from './logger';
 
 let statusBar: vscode.StatusBarItem;
@@ -69,9 +70,14 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.languages.registerHoverProvider({ language: 'systemverilog' }, {
+    vscode.languages.registerHoverProvider([{ language: 'systemverilog' }, { language: 'verilog' }], {
       async provideHover(document, position) {
         const cfg = getConfig();
+        if (cfg.languageServerEnabled && serverProvidesHover()) {
+          // The language server owns hover when it advertises the capability;
+          // returning undefined lets its hover provider answer instead.
+          return undefined;
+        }
         if (cfg.hoverMaxSize === 0) {
           return undefined;
         }
@@ -743,6 +749,20 @@ function findDriverAt(text: string, signal: string, range: TextSpan): number | n
   const body = text.slice(range.bodyStart, range.end);
   const base = range.bodyStart;
   const spans = commentSpans(text);
+  // Assignment target, including a signal inside a concatenation lvalue such as
+  // `{a, sig, b} = expr;` (possibly split across lines). `isAssignmentTarget`
+  // expects offsets into the full `text`.
+  const occRe = new RegExp('\\b' + esc + '\\b', 'g');
+  let om: RegExpExecArray | null;
+  while ((om = occRe.exec(body)) !== null) {
+    const off = base + om.index;
+    if (inSpans(spans, off)) {
+      continue;
+    }
+    if (isAssignmentTarget(text, off, signal.length)) {
+      return off;
+    }
+  }
   const patterns = [
     '(?:^|[^\\w.])(' + esc + ')\\b(?:\\s*\\[[^\\]]*\\])*\\s*(?:<=|=)(?!=)',
     '\\bassign\\b[^;\\n]*\\b(' + esc + ')\\b(?:\\s*\\[[^\\]]*\\])*\\s*=',
@@ -888,7 +908,7 @@ async function showType(): Promise<void> {
     const editor2 = vscode.window.activeTextEditor!;
     const pos = editor2.selection.active;
     const hoverProvider = vscode.languages.registerHoverProvider(
-      { language: 'systemverilog' },
+      [{ language: 'systemverilog' }, { language: 'verilog' }],
       { provideHover: () => new vscode.Hover(new vscode.MarkdownString(md)) }
     );
     // show a transient message too, and dispose the temporary provider shortly after

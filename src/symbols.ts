@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { documentModuleInfo } from './documentCache';
+import { getConfig } from './config';
+import { serverProvidesDocumentSymbol } from './languageServer';
 import * as logger from './logger';
 
 function esc(s: string): string {
@@ -111,9 +113,13 @@ async function showInstances(): Promise<void> {
 export function registerSymbols(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.languages.registerDocumentSymbolProvider(
-      { language: 'systemverilog' },
+      [{ language: 'systemverilog' }, { language: 'verilog' }],
       {
         provideDocumentSymbols(document) {
+          if (getConfig().languageServerEnabled && serverProvidesDocumentSymbol()) {
+            // The language server owns document symbols when it advertises them.
+            return undefined;
+          }
           const syms = moduleSymbols(document);
           logger.debug(
             `documentSymbols: ${syms[0] ? syms[0].children.length : 0} instance(s) in ${document.fileName}`

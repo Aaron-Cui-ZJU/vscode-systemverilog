@@ -9,6 +9,12 @@ import { registerSymbols } from './symbols';
 import { INDEX, initIndex } from './indexer';
 import { insertFsmTemplate } from './fsm';
 import { getConfig, invalidateConfigCache } from './config';
+import { syncSlangServerConfig } from './slangConfig';
+import {
+  startLanguageServer,
+  stopLanguageServer,
+  stopLanguageServerOnDeactivate,
+} from './languageServer';
 import * as logger from './logger';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -16,6 +22,18 @@ export function activate(context: vscode.ExtensionContext): void {
   logger.info('initializing workspace index');
   initIndex();
   INDEX.start();
+
+  // Sync the generated slang-server config before starting so the server picks
+  // it up on launch. The sync is a no-op unless enabled and configured.
+  const startWithSync = async (): Promise<void> => {
+    await syncSlangServerConfig();
+    await startLanguageServer();
+  };
+  const restartWithSync = async (): Promise<void> => {
+    await stopLanguageServer();
+    await syncSlangServerConfig();
+    await startLanguageServer();
+  };
 
   registerNavigation(context);
   registerSettingsPanel(context);
@@ -33,6 +51,32 @@ export function activate(context: vscode.ExtensionContext): void {
         if (editor) {
           await insertFsmTemplate(editor);
         }
+      })
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.syncLanguageServerConfig',
+      logger.command('systemverilog.syncLanguageServerConfig', async () => {
+        const cfg = getConfig();
+        if (!cfg.languageServerEnabled) {
+          vscode.window.showInformationMessage(
+            'SystemVerilog: enable systemverilog.languageServer.enabled first.'
+          );
+          return;
+        }
+        if (!cfg.languageServerSyncConfig) {
+          vscode.window.showInformationMessage(
+            'SystemVerilog: enable systemverilog.languageServer.syncConfig first.'
+          );
+          return;
+        }
+        await syncSlangServerConfig();
+        vscode.window.showInformationMessage('SystemVerilog: language server config synced.');
+      })
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.restartLanguageServer',
+      logger.command('systemverilog.restartLanguageServer', async () => {
+        await restartWithSync();
       })
     )
   );
@@ -76,6 +120,16 @@ export function activate(context: vscode.ExtensionContext): void {
       ) {
         logger.info('index settings changed, rebuilding index');
         void INDEX.rebuild();
+        void syncSlangServerConfig();
+      }
+      if (e.affectsConfiguration('systemverilog.languageServer')) {
+        if (getConfig().languageServerEnabled) {
+          logger.info('language server settings changed, restarting');
+          void restartWithSync();
+        } else {
+          logger.info('language server disabled, stopping');
+          void stopLanguageServer();
+        }
       }
     })
   );
@@ -94,8 +148,13 @@ export function activate(context: vscode.ExtensionContext): void {
     listWatcher.onDidDelete(rebuildIfListed)
   );
   logger.info('SystemVerilog extension ready');
+
+  if (getConfig().languageServerEnabled) {
+    logger.info('language server enabled, starting');
+    void startWithSync();
+  }
 }
 
-export function deactivate(): void {
-  // nothing to do
+export function deactivate(): Thenable<void> | void {
+  return stopLanguageServerOnDeactivate();
 }

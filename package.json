@@ -141,94 +141,94 @@
       {
         "command": "systemverilog.showType",
         "key": "f10",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.instantiateModule",
         "key": "ctrl+f10",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.toggleDotStar",
         "key": "ctrl+shift+f10",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.align",
         "key": "ctrl+shift+a",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.reindent",
         "key": "alt+shift+a",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.gotoDriver",
         "key": "ctrl+f12",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.gotoDeclaration",
         "key": "shift+f12",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.gotoBlockBoundary",
         "key": "ctrl+m",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       },
       {
         "command": "systemverilog.selectBlockBoundary",
         "key": "ctrl+shift+m",
-        "when": "editorTextFocus && editorLangId == systemverilog"
+        "when": "editorTextFocus && (editorLangId == systemverilog || editorLangId == verilog)"
       }
     ],
     "menus": {
       "editor/context": [
         {
           "command": "systemverilog.gotoDeclaration",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "navigation@10"
         },
         {
           "command": "systemverilog.gotoDriver",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "navigation@11"
         },
         {
           "command": "systemverilog.showType",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "navigation@12"
         },
         {
           "command": "systemverilog.showInstances",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "navigation@13"
         },
         {
           "command": "systemverilog.gotoInstantiator",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "navigation@14"
         },
         {
           "command": "systemverilog.instantiateModule",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "1_modification@10"
         },
         {
           "command": "systemverilog.align",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "1_modification@11"
         },
         {
           "command": "systemverilog.reindent",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "1_modification@12"
         },
         {
           "command": "systemverilog.findUnusedSignals",
-          "when": "editorLangId == systemverilog",
+          "when": "(editorLangId == systemverilog || editorLangId == verilog)",
           "group": "1_modification@13"
         }
       ]
@@ -606,6 +606,9 @@
     "test": "node test/parser.test.js && node test/beautifier.test.js && node test/filelist.test.js && node test/instances.test.js",
     "changelog": "node scripts/update-changelog.js",
     "release": "node scripts/release.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
   },
   "devDependencies": {
     "@types/node": "^18.0.0",
