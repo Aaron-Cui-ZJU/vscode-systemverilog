@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as logger from './logger';
 import { DEFAULT_PORT_DIRECTION_COLORS, getConfig } from './config';
 import { FileListSetting } from './filelist';
-import { validateFileLists, validateIncludeDirs } from './indexer';
+import { INDEX, validateFileLists, validateIncludeDirs } from './indexer';
 
 const DIRECTIONS = Object.keys(DEFAULT_PORT_DIRECTION_COLORS);
 
@@ -44,7 +44,13 @@ async function onMessage(msg: unknown): Promise<void> {
   if (!msg || typeof msg !== 'object') {
     return;
   }
-  const m = msg as { type?: unknown; colors?: unknown; fileLists?: unknown; includeDirs?: unknown };
+  const m = msg as {
+    type?: unknown;
+    colors?: unknown;
+    fileLists?: unknown;
+    includeDirs?: unknown;
+    path?: unknown;
+  };
   if (m.type === 'save') {
     const colors = sanitizeColors(m.colors);
     const fileLists = sanitizeFileLists(m.fileLists);
@@ -67,6 +73,15 @@ async function onMessage(msg: unknown): Promise<void> {
     const result = validateIncludeDirs(fileLists, includeDirs);
     logger.info(`configureSettings: validated ${includeDirs.length} include dir(s)`);
     void panel?.webview.postMessage({ type: 'incValidation', result });
+  } else if (m.type === 'check') {
+    const target = typeof m.path === 'string' ? m.path.trim() : '';
+    if (!target) {
+      void panel?.webview.postMessage({ type: 'checkResult', result: null });
+      return;
+    }
+    const result = await INDEX.inspectFile(target);
+    logger.info(`configureSettings: check "${target}" -> ${result.indexed ? 'indexed' : 'not indexed'}`);
+    void panel?.webview.postMessage({ type: 'checkResult', result });
   }
 }
 
@@ -191,6 +206,8 @@ function settingsHtml(
   .vrow.warn { color: var(--vscode-charts-orange); }
   .vrow.err { color: var(--vscode-charts-red); }
   .sample { color: var(--vscode-descriptionForeground); margin-left: 16px; }
+  .checkrow { display: flex; align-items: center; }
+  .checkrow input { margin-right: 8px; }
 </style>
 </head>
 <body>
@@ -220,6 +237,14 @@ function settingsHtml(
   <button id="addInc" class="secondary small">Add directory</button>
   <button id="validateInc" class="secondary small">Validate</button>
   <div id="incValidation" class="validation"></div>
+
+  <h2>Check Indexed File</h2>
+  <p class="hint">Type a path (absolute, or relative to the workspace root) to see whether the file is part of the current index.</p>
+  <div class="checkrow">
+    <input id="checkPath" type="text" class="list-file" spellcheck="false" placeholder="design/tb/vips/power/power_pkg.svh">
+    <button id="checkFile" class="secondary small">Check</button>
+  </div>
+  <div id="checkResult" class="validation"></div>
 
   <div class="buttons">
     <button id="save">Save</button>
@@ -417,6 +442,8 @@ function settingsHtml(
       renderValidation(msg.results);
     } else if (msg.type === 'incValidation') {
       renderIncValidation(msg.result);
+    } else if (msg.type === 'checkResult') {
+      renderCheckResult(msg.result);
     }
   });
 
@@ -519,6 +546,61 @@ function settingsHtml(
   document.getElementById('validateInc').addEventListener('click', () => {
     incValidationBox.textContent = 'Validating...';
     vscode.postMessage({ type: 'validateInc', fileLists: lists, includeDirs: incdirs });
+  });
+
+  const checkBox = document.getElementById('checkResult');
+
+  function renderCheckResult(r) {
+    checkBox.innerHTML = '';
+    if (!r) {
+      checkBox.textContent = 'Type a path to check.';
+      return;
+    }
+    const row = document.createElement('div');
+    row.className = 'vrow ' + (r.indexed ? 'ok' : 'err');
+    row.textContent = r.relative + '  ->  ' + (r.indexed ? 'INDEXED' : 'NOT indexed');
+    checkBox.appendChild(row);
+
+    const info = document.createElement('div');
+    info.className = 'sample';
+    let text = 'mode: ' + (r.mode === 'all' ? 'whole workspace' : 'file lists')
+      + ', exists: ' + r.exists
+      + ', supported extension: ' + r.supported;
+    if (r.indexed && r.mode === 'fileList' && r.via && r.via.length) {
+      text += ', via: ' + r.via.join(', ');
+    }
+    info.textContent = text;
+    checkBox.appendChild(info);
+
+    if (!r.exists) {
+      const n = document.createElement('div');
+      n.className = 'sample';
+      n.textContent = r.path + ' does not exist on disk';
+      checkBox.appendChild(n);
+    }
+    if (!r.supported) {
+      const n = document.createElement('div');
+      n.className = 'sample';
+      n.textContent = 'extension is not v/sv/vh/svh, so it is never indexed';
+      checkBox.appendChild(n);
+    }
+  }
+
+  function runCheck() {
+    const value = document.getElementById('checkPath').value;
+    if (!value.trim()) {
+      checkBox.textContent = 'Type a path to check.';
+      return;
+    }
+    checkBox.textContent = 'Checking...';
+    vscode.postMessage({ type: 'check', path: value });
+  }
+
+  document.getElementById('checkFile').addEventListener('click', runCheck);
+  document.getElementById('checkPath').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      runCheck();
+    }
   });
 
   document.getElementById('save').addEventListener('click', () => {

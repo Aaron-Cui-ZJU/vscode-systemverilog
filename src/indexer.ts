@@ -55,6 +55,17 @@ export interface IncludeDirsValidation {
   unresolved: { include: string; from: string }[];
 }
 
+export interface IndexedFileInfo {
+  input: string;
+  path: string;
+  relative: string;
+  exists: boolean;
+  supported: boolean;
+  mode: 'all' | 'fileList';
+  indexed: boolean;
+  via: string[];
+}
+
 function supportedExtensions(cfg: SvConfig, includeHeaders = true): Set<string> {
   const exts = new Set<string>();
   for (const e of cfg.vExt) exts.add(e);
@@ -198,6 +209,7 @@ export class WorkspaceIndex {
   // When fileLists are configured the index is limited to the resolved set.
   private restricted = false;
   private scope = new Set<string>();
+  private scopeVia = new Map<string, Set<string>>();
 
   private async stat(uri: vscode.Uri): Promise<number> {
     try {
@@ -275,13 +287,15 @@ export class WorkspaceIndex {
   private async collectIndexFiles(): Promise<{
     files: vscode.Uri[];
     scope: string[];
+    via: Map<string, Set<string>>;
     restricted: boolean;
   }> {
     const cfg = getConfig();
     const entries = cfg.fileLists.filter((l) => l.file && l.base);
+    const via = new Map<string, Set<string>>();
     if (!entries.length) {
       const files = await this.globFiles();
-      return { files, scope: files.map((f) => f.toString()), restricted: false };
+      return { files, scope: files.map((f) => f.toString()), via, restricted: false };
     }
     const exts = supportedExtensions(cfg);
     const globalInc = cfg.includeDirs.map((d) => resolveWorkspacePath(d));
@@ -305,13 +319,19 @@ export class WorkspaceIndex {
         const uri = vscode.Uri.file(p);
         const key = uri.toString();
         scope.add(key);
+        let sources = via.get(key);
+        if (!sources) {
+          sources = new Set<string>();
+          via.set(key, sources);
+        }
+        sources.add(entry.file);
         if (fs.existsSync(p)) {
           existing.set(key, uri);
         }
       }
       logger.debug(`fileList ${entry.file}: ${paths.length} path(s)`);
     }
-    return { files: [...existing.values()], scope: [...scope], restricted: true };
+    return { files: [...existing.values()], scope: [...scope], via, restricted: true };
   }
 
   // Build the index on first use; subsequent calls resolve immediately.
@@ -338,9 +358,10 @@ export class WorkspaceIndex {
 
   private async buildIndex(): Promise<void> {
     const t0 = Date.now();
-    const { files, scope, restricted } = await this.collectIndexFiles();
+    const { files, scope, via, restricted } = await this.collectIndexFiles();
     this.restricted = restricted;
     this.scope = new Set(scope);
+    this.scopeVia = via;
     this.allFiles = files;
     this.byName.clear();
     this.records.clear();
@@ -386,6 +407,30 @@ export class WorkspaceIndex {
     this.records.delete(key);
     this.dropSymbols(uri);
     this.allFiles = this.allFiles.filter((u) => u.toString() !== key);
+  }
+
+  // Report whether a path is part of the current index and, when filelists are
+  // in use, which filelist entries pull it in.
+  async inspectFile(input: string): Promise<IndexedFileInfo> {
+    await this.ensureIndex();
+    const abs = resolveWorkspacePath(input.trim());
+    const uri = vscode.Uri.file(abs);
+    const key = uri.toString();
+    const exts = supportedExtensions(getConfig());
+    const supported = exts.has(path.extname(abs).slice(1).toLowerCase());
+    const indexed = this.restricted
+      ? this.scope.has(key)
+      : this.allFiles.some((u) => u.toString() === key);
+    return {
+      input,
+      path: abs,
+      relative: vscode.workspace.asRelativePath(uri),
+      exists: fs.existsSync(abs),
+      supported,
+      mode: this.restricted ? 'fileList' : 'all',
+      indexed,
+      via: [...(this.scopeVia.get(key) ?? [])],
+    };
   }
 
   private scanSymbols(uri: vscode.Uri, text: string): SymbolEntry[] {

@@ -105,7 +105,10 @@ directory exists and lists every `` `include `` that still cannot be resolved.
 
 Both settings and the port hover colors can be edited from **Verilog:
 Configure Settings**, where **Validate** checks each entry and reports how many
-files resolve (and which are missing) before you save.
+files resolve (and which are missing) before you save. The panel also has a
+**Check Indexed File** box: type a path (absolute or relative to the workspace
+root) to see whether it is part of the current index, and, when filelists are
+used, which entry pulls it in.
 
 ## Building
 
