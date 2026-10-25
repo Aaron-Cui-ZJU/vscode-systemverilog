@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.5 (2026-10-25)
+
+- Cache instantiations to speed up instance navigation
+
+
 ## 1.2.4 (2026-10-07)
 
 - Optimize extension icon (256x256, transparent background)
