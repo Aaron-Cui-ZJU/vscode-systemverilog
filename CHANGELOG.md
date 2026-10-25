@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.6 (2026-10-25)
+
+- Simplify README and remove unused settings
+
+
 ## 1.2.5 (2026-10-25)
 
 - Cache instantiations to speed up instance navigation
