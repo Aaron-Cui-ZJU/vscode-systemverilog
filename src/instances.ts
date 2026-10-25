@@ -1,6 +1,9 @@
 import { maskComments } from './parser';
 
 export interface InstantiationSite {
+  // Name of the instantiated module/interface. Only set by
+  // findAllInstantiationSites, which groups sites by target.
+  target?: string;
   // Name of the module/interface whose body contains the instance ('' when the
   // instance sits outside any module).
   parent: string;
@@ -8,6 +11,8 @@ export interface InstantiationSite {
   instance: string;
   // Absolute path of the file that holds the instance.
   file: string;
+  // URI of the file that holds the instance. Only set by the indexer cache.
+  uri?: string;
   // Zero-based line of the instance.
   line: number;
 }
@@ -78,6 +83,84 @@ export function findInstantiationSites(
       }
       scanned = m.index;
       out.push({ parent: owners[line] || '', instance: m[1], file: path, line });
+    }
+  }
+  return out;
+}
+
+const KEYWORDS = new Set([
+  'module',
+  'interface',
+  'function',
+  'task',
+  'program',
+  'class',
+  'package',
+  'generate',
+  'begin',
+  'case',
+  'casex',
+  'casez',
+  'if',
+  'for',
+  'while',
+  'assign',
+  'initial',
+  'always',
+  'defparam',
+  'localparam',
+  'parameter',
+  'typedef',
+  'enum',
+  'struct',
+  'union',
+  'endmodule',
+  'endinterface',
+  'endpackage',
+  'endclass',
+  'endfunction',
+  'endtask',
+  'endcase',
+  'endgenerate',
+  'end',
+  'else',
+  'return',
+  'break',
+  'continue',
+]);
+
+// Scan every file and return ALL instantiation sites, each tagged with its
+// target module/interface name. The indexer uses this once per file to build a
+// target -> sites map, so "go to instantiating module" avoids rescanning every
+// file on each invocation.
+export function findAllInstantiationSites(files: { path: string; text: string }[]): InstantiationSite[] {
+  const out: InstantiationSite[] = [];
+  for (const { path, text } of files) {
+    const masked = maskComments(text);
+    const owners = lineOwners(masked);
+    const re = /^[ \t]*([A-Za-z_]\w*)\b\s*(?:#\s*\([^;]*\))?\s*(\w+)(?:\s*\[[^\]]*\])?\s*\(/gm;
+    re.lastIndex = 0;
+    let line = 0;
+    let scanned = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(masked)) !== null) {
+      for (let i = scanned; i < m.index; i++) {
+        if (masked[i] === '\n') {
+          line++;
+        }
+      }
+      scanned = m.index;
+      const target = m[1];
+      if (KEYWORDS.has(target)) {
+        continue;
+      }
+      out.push({
+        target,
+        parent: owners[line] || '',
+        instance: m[2],
+        file: path,
+        line,
+      });
     }
   }
   return out;

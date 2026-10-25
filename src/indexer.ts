@@ -12,6 +12,7 @@ import {
 } from './parser';
 import { getConfig, SvConfig } from './config';
 import { FileListSetting, followIncludes, resolveFileList } from './filelist';
+import { InstantiationSite, findAllInstantiationSites } from './instances';
 import { documentModuleInfo } from './documentCache';
 import * as logger from './logger';
 
@@ -36,6 +37,7 @@ interface FileRecord {
   modules?: Map<string, ModuleInfo | null>;
   packages?: Map<string, TypeInfo[] | null>;
   classes?: Map<string, ClassInfo | null>;
+  instantiations?: InstantiationSite[];
 }
 
 // A cached file is trusted for this long before its mtime is checked again on a
@@ -224,6 +226,11 @@ export class WorkspaceIndex {
   private allFiles: vscode.Uri[] = [];
   private fileSet = new Set<string>();
   private ready: Promise<void> | null = null;
+  private built = false;
+  // Instantiation cache: target module/interface name -> sites that instantiate it.
+  // `fileInstantiations` is the reverse index used to invalidate one file at a time.
+  private instantiations = new Map<string, InstantiationSite[]>();
+  private fileInstantiations = new Map<string, InstantiationSite[]>();
   // When fileLists are configured the index is limited to the resolved set.
   private restricted = false;
   private scope = new Set<string>();
@@ -357,7 +364,58 @@ export class WorkspaceIndex {
     this.dropSymbols(uri);
     const symbols = this.scanSymbols(uri, text);
     this.addSymbols(uri, symbols);
+    this.dropInstantiations(uri);
+    this.addInstantiations(uri, this.scanInstantiations(uri, text));
     return symbols;
+  }
+
+  // Remove this file's sites from the target table using the reverse index.
+  private dropInstantiations(uri: vscode.Uri): void {
+    const key = uri.toString();
+    const owned = this.fileInstantiations.get(key);
+    if (!owned) {
+      return;
+    }
+    for (const site of owned) {
+      if (!site.target) {
+        continue;
+      }
+      const entries = this.instantiations.get(site.target);
+      if (!entries) {
+        continue;
+      }
+      const kept = entries.filter((s) => s !== site);
+      if (kept.length) {
+        this.instantiations.set(site.target, kept);
+      } else {
+        this.instantiations.delete(site.target);
+      }
+    }
+    this.fileInstantiations.delete(key);
+  }
+
+  private addInstantiations(uri: vscode.Uri, sites: InstantiationSite[]): void {
+    this.fileInstantiations.set(uri.toString(), sites);
+    for (const site of sites) {
+      if (!site.target) {
+        continue;
+      }
+      const entries = this.instantiations.get(site.target);
+      if (entries) {
+        entries.push(site);
+      } else {
+        this.instantiations.set(site.target, [site]);
+      }
+    }
+  }
+
+  private scanInstantiations(uri: vscode.Uri, text: string): InstantiationSite[] {
+    const sites = findAllInstantiationSites([{ path: uri.fsPath, text }]);
+    const uriStr = uri.toString();
+    for (const site of sites) {
+      site.uri = uriStr;
+    }
+    return sites;
   }
 
   private globFiles(): Thenable<vscode.Uri[]> {
@@ -436,8 +494,11 @@ export class WorkspaceIndex {
     this.records.clear();
     this.byName.clear();
     this.fileSymbols.clear();
+    this.instantiations.clear();
+    this.fileInstantiations.clear();
     this.allFiles = [];
     this.fileSet.clear();
+    this.built = false;
     this.ready = this.buildIndex();
     return this.ready;
   }
@@ -452,7 +513,10 @@ export class WorkspaceIndex {
     this.fileSet = new Set(this.allFiles.map((f) => f.toString()));
     this.byName.clear();
     this.fileSymbols.clear();
+    this.instantiations.clear();
+    this.fileInstantiations.clear();
     this.records.clear();
+    this.built = false;
     // Read/scan files in bounded batches so a large workspace does not wait on
     // one file at a time while still limiting concurrent filesystem handles.
     // Insertion into the name table happens afterwards, in file order, so the
@@ -467,7 +531,9 @@ export class WorkspaceIndex {
             const text = await this.readDiskText(uri);
             const mtime = await this.stat(uri);
             const symbols = this.scanSymbols(uri, text);
-            built[i + j] = this.makeRecord(text, mtime, symbols);
+            const record = this.makeRecord(text, mtime, symbols);
+            record.instantiations = this.scanInstantiations(uri, text);
+            built[i + j] = record;
           } catch {
             // File may have been removed while scanning; skip it.
           }
@@ -481,11 +547,15 @@ export class WorkspaceIndex {
       }
       const uri = files[k];
       this.addSymbols(uri, rec.symbols);
+      if (rec.instantiations) {
+        this.addInstantiations(uri, rec.instantiations);
+      }
       this.records.set(uri.toString(), rec);
     }
     logger.info(
       `index built: ${files.length} file(s) in ${Date.now() - t0} ms${restricted ? ' (fileList)' : ''}`
     );
+    this.built = true;
   }
 
   // Re-read a single file from disk and update its symbols.
@@ -512,6 +582,7 @@ export class WorkspaceIndex {
     const key = uri.toString();
     this.records.delete(key);
     this.dropSymbols(uri);
+    this.dropInstantiations(uri);
     const idx = this.allFiles.findIndex((u) => u.toString() === key);
     if (idx >= 0) {
       this.allFiles.splice(idx, 1);
@@ -647,6 +718,14 @@ export class WorkspaceIndex {
       logger.debug(`findSymbols "${name}": ${out.length} match(es)`);
     }
     return out;
+  }
+
+  async findInstantiations(name: string): Promise<InstantiationSite[]> {
+    if (!this.built) {
+      await this.ensureIndex();
+    }
+    const sites = this.instantiations.get(name);
+    return sites ? sites.slice() : [];
   }
 
   async lookupModule(name: string): Promise<{ info: ModuleInfo; uri: vscode.Uri; text: string } | null> {

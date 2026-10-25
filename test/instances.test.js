@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { findInstantiationSites, enclosingModuleName } = require('../out/instances.js');
+const { findAllInstantiationSites, findInstantiationSites, enclosingModuleName } = require('../out/instances.js');
 
 let pass = 0;
 let fail = 0;
@@ -62,6 +62,15 @@ check('findInstantiationSites', findInstantiationSites(files, 'child'), [
 check('findInstantiationSites empty target', findInstantiationSites(files, ''), []);
 
 check('findInstantiationSites unknown target', findInstantiationSites(files, 'nope'), []);
+
+check('findAllInstantiationSites', findAllInstantiationSites(files), [
+  { target: 'child', parent: 'top', instance: 'u_a', file: 'a.sv', line: 1 },
+  { target: 'child', parent: 'top', instance: 'u_b', file: 'a.sv', line: 2 },
+  { target: 'child', parent: 'top', instance: 'u_g', file: 'a.sv', line: 5 },
+  { target: 'child', parent: 'mid', instance: 'u_p', file: 'b.sv', line: 1 },
+  { target: 'other', parent: 'mid', instance: 'u_o', file: 'b.sv', line: 8 },
+  { target: 'child', parent: 'other', instance: 'u_arr', file: 'c.sv', line: 1 },
+]);
 
 check('enclosingModuleName body', enclosingModuleName(aText, aText.indexOf('u_b')), 'top');
 

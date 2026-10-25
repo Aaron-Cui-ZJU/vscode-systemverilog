@@ -3,7 +3,7 @@ import { TypeInfo, getAllTypeInfo, getTypeInfo } from './parser';
 import { INDEX, getWordAt } from './indexer';
 import { cleanDocument, documentModuleInfo } from './documentCache';
 import { findDeclarationLine, findDriver, isAssignmentTarget, memberDeclaration, typeInfo } from './lookup';
-import { enclosingModuleName, findInstantiationSites } from './instances';
+import { enclosingModuleName } from './instances';
 import { getConfig } from './config';
 import { serverProvidesHover } from './languageServer';
 import * as logger from './logger';
@@ -323,9 +323,17 @@ async function gotoMember(arg?: unknown): Promise<void> {
   }
   const uri = vscode.Uri.parse(a.uri);
   logger.info(`gotoMember -> ${vscode.workspace.asRelativePath(uri)}:${a.line + 1}`);
+  const pos = new vscode.Position(Math.max(0, a.line), 0);
+  for (const editor of vscode.window.visibleTextEditors) {
+    if (editor.document.uri.toString() === uri.toString()) {
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+      await vscode.window.showTextDocument(editor.document, editor.viewColumn);
+      return;
+    }
+  }
   const doc = await vscode.workspace.openTextDocument(uri);
   const ed = await vscode.window.showTextDocument(doc);
-  const pos = new vscode.Position(Math.max(0, a.line), 0);
   ed.selection = new vscode.Selection(pos, pos);
   ed.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
 }
@@ -1052,24 +1060,16 @@ async function findInstance(): Promise<void> {
   if (!name) {
     return;
   }
-  const files = await INDEX.getAllFiles();
-  const results: string[] = [];
-  const e = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('^[ \\t]*' + e + '\\b\\s*(#\\s*\\([^;]*\\))?\\s*(\\w+)\\s*\\(', 'gm');
-  for (const uri of files) {
-    const text = await INDEX.readFile(uri);
-    let m: RegExpExecArray | null;
-    const local = new RegExp(re.source, 'gm');
-    while ((m = local.exec(text)) !== null) {
-      const line = text.slice(0, m.index).split(/\r?\n/).length;
-      results.push(`${vscode.workspace.asRelativePath(uri)}:${line}  ${m[2]}`);
-    }
-  }
-  if (!results.length) {
+  const sites = await INDEX.findInstantiations(name);
+  if (!sites.length) {
     logger.info(`findInstance "${name}": no instance found`);
     vscode.window.showInformationMessage('No instance of "' + name + '" found');
     return;
   }
+  const results = sites.map((site) => {
+    const uri = site.uri ? vscode.Uri.parse(site.uri) : vscode.Uri.file(site.file);
+    return `${vscode.workspace.asRelativePath(uri)}:${site.line + 1}  ${site.instance}`;
+  });
   logger.info(`findInstance "${name}": ${results.length} instance(s)`);
   const doc = await vscode.workspace.openTextDocument({
     content: 'Instances of ' + name + ':\n\n' + results.join('\n'),
@@ -1103,14 +1103,7 @@ async function gotoInstantiator(arg?: unknown): Promise<void> {
     vscode.window.showInformationMessage('Cursor is not inside a module');
     return;
   }
-  const files = await INDEX.getAllFiles();
-  const scanned: { path: string; text: string }[] = [];
-  const uriByPath = new Map<string, vscode.Uri>();
-  for (const uri of files) {
-    scanned.push({ path: uri.fsPath, text: await INDEX.readFile(uri) });
-    uriByPath.set(uri.fsPath, uri);
-  }
-  const sites = findInstantiationSites(scanned, target);
+  const sites = await INDEX.findInstantiations(target);
   if (!sites.length) {
     logger.info(`gotoInstantiator "${target}": no instantiation found`);
     vscode.window.showInformationMessage('No module instantiates "' + target + '"');
@@ -1122,7 +1115,10 @@ async function gotoInstantiator(arg?: unknown): Promise<void> {
     const items = top.map((s) => ({
       label: s.parent || '(top level)',
       description: 'instance ' + s.instance,
-      detail: vscode.workspace.asRelativePath(vscode.Uri.file(s.file)) + ':' + (s.line + 1),
+      detail:
+        vscode.workspace.asRelativePath(s.uri ? vscode.Uri.parse(s.uri) : vscode.Uri.file(s.file)) +
+        ':' +
+        (s.line + 1),
     }));
     const pick = await vscode.window.showQuickPick(items, {
       placeHolder: `Modules instantiating ${target}`,
@@ -1134,7 +1130,7 @@ async function gotoInstantiator(arg?: unknown): Promise<void> {
     }
     chosen = top[items.indexOf(pick)];
   }
-  const uri = uriByPath.get(chosen.file) ?? vscode.Uri.file(chosen.file);
+  const uri = chosen.uri ? vscode.Uri.parse(chosen.uri) : vscode.Uri.file(chosen.file);
   logger.info(
     `gotoInstantiator "${target}" -> ${vscode.workspace.asRelativePath(uri)}:${chosen.line + 1} (${chosen.parent}.${chosen.instance})`
   );
