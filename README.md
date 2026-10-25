@@ -1,140 +1,93 @@
 # SystemVerilog for Visual Studio Code
 
-SystemVerilog / Verilog language support for VS Code, ported from the Sublime Text
-[SystemVerilog plugin](https://github.com/TheClams/SystemVerilog) (documentation at
-<https://sv-doc.readthedocs.io/en/latest/>).
+SystemVerilog / Verilog support for VS Code, ported from the Sublime Text
+[SystemVerilog plugin](https://github.com/TheClams/SystemVerilog). Supports `.v`,
+`.vh`, `.sv` and `.svh` files.
 
-It provides syntax highlighting, code navigation, smart completion, alignment,
-module instantiation and lightweight linting for `.v`, `.vh`, `.sv` and `.svh`
-files.
+## Quick start
+
+1. Install the extension and open a workspace containing HDL files.
+2. Open the Command Palette and type `Verilog` to see the commands.
+3. For large projects, configure `systemverilog.fileLists` and
+   `systemverilog.includeDirs`.
+4. Use **Verilog: Configure Settings** for a validated settings UI.
 
 ## Features
 
-### Syntax highlighting
-Full Verilog / SystemVerilog TextMate grammar, plus language configuration
-(brackets, comments, folding).
-
-### Code navigation
-- **Show declaration** (`F10`): declaration of the symbol under the cursor,
-  including struct / enum / interface / class field information.
-- **Goto declaration** (`Shift+F12`): jump to the declaration of a signal,
-  module, interface, package, class or function.
-- **Goto driver** (`Ctrl+F12`): jump to the driver of a signal (output port,
-  assignment, `assign` or sub-module output connection).
-- **Show hierarchy**: open the complete module hierarchy of the current module.
-- **Find instance**: list every place the current module is instantiated.
-- **Go to instantiating module** (right-click inside a module): jump to the
-  module(s) that instantiate it, offering up to five parent-module / instance
-  name entries when there are several.
-- **Move / select block** (`Ctrl+M` / `Ctrl+Shift+M`): move to or select the
-  enclosing `begin/end`, `module/endmodule`, `case/endcase`, ... block.
-- Hover provider showing declaration information.
-- Hovering a port binding (`.name(sig)`) shows the port direction, color-coded
-  per direction (input / output / inout / ref). Use **Configure Settings** to
-  pick the colors in a UI.
-
-### Completion
-- Smart `always` / `always_ff` / `always_comb` snippets that adapt to the
-  clock/reset names found in the current buffer.
-- Intellisense-like completion after `.` for struct, union, enum, class,
-  interface, module instance and built-in container/string members.
-- Scope (`::`) completion for packages and enum values.
-- `case` completion (fill all enum/vector values).
-- System tasks (`$`), compiler directives (`` ` ``), UVM functions, modport and
-  simple keyword snippets.
-
-### Alignment / formatting
-- **Alignment** (`Ctrl+Shift+A`): align ports, module instantiations, signal
-  declarations and assignments.
-- **Reindent** (`Alt+Shift+A`).
-
-### Instantiation
-- **Instantiate module** (`Ctrl+F10`): pick a module, fill parameters, and let
-  the extension auto-connect and auto-declare signals.
-- **Toggle .\*** (`Ctrl+Shift+F10`): expand/collapse SystemVerilog implicit port
-  connections.
-
-### FSM & linting
-- **Insert FSM template**: generate a two-process state machine from an
-  enum/vector signal.
-- **Find unused signals** / **Linting**: find unused and undeclared signals.
+- **Syntax**: Verilog/SystemVerilog TextMate grammar, brackets, comments and folding.
+- **Navigation**: show type (`F10`), declaration (`Shift+F12`) and driver
+  (`Ctrl+F12`); module hierarchy; find instances; jump to the instantiating
+  module; show module instances and outline entries.
+- **Hover**: links to module, interface, class and member definitions; port
+  direction with first-use/driver links; configurable direction colors.
+- **Completion**: adaptive `always` / `always_ff` / `always_comb` snippets; dot and
+  `::` completion; enum/vector `case` completion; system tasks, directives, UVM
+  functions and keyword snippets.
+- **Editing**: alignment, reindent, module instantiation with parameter prompts
+  and auto-connect, `.*` expansion, FSM template generation, block move/select.
+- **Linting**: find unused and undeclared signals.
+- **Indexing**: background workspace index, refreshed on file changes; filelists
+  and include directories keep large projects fast.
 
 ## Commands
 
-All commands are available from the Command Palette under the `Verilog:`
-category (and from the editor context menu).
+Most commands are in the Command Palette under `Verilog`. Common navigation and
+editing commands are also in the editor context menu. Block boundary commands are
+keybinding-only.
 
 | Command | Default key |
 | --- | --- |
 | Verilog: Show Signal/Variable Type | `F10` |
+| Verilog: GoTo Declaration | `Shift+F12` |
+| Verilog: GoTo Driver | `Ctrl+F12` |
+| Verilog: Show Module Hierarchy | |
+| Verilog: Find Instance | |
+| Verilog: Go to Instantiating Module | |
+| Verilog: Show Module Instances | |
+| Move to Block Boundary | `Ctrl+M` |
+| Select Block Boundary | `Ctrl+Shift+M` |
 | Verilog: Instantiate Module | `Ctrl+F10` |
 | Verilog: Toggle .* | `Ctrl+Shift+F10` |
 | Verilog: Alignment | `Ctrl+Shift+A` |
 | Verilog: Reindent | `Alt+Shift+A` |
-| Verilog: GoTo Driver | `Ctrl+F12` |
-| Verilog: GoTo Declaration | `Shift+F12` |
-| Verilog: Go to Instantiating Module | |
-| (move to block boundary) | `Ctrl+M` |
-| (select block boundary) | `Ctrl+Shift+M` |
+| Verilog: Insert FSM template | |
+| Verilog: Find Unused Signals | |
+| Verilog: Linting | |
 | Verilog: Configure Settings | |
 
-## Settings
+## Configuration
 
-Every setting of the original plugin is available under the `systemverilog.*`
-namespace (e.g. `systemverilog.clkName`, `systemverilog.autoconnect`,
-`systemverilog.alignmentIgnoreTick`, `systemverilog.completionSystemtaskUser`,
-...). See the Settings UI for the full list with descriptions.
+All settings are under `systemverilog.*`. **Verilog: Configure Settings** provides
+the full UI and can validate filelists, include directories and indexed files.
 
-`systemverilog.fileLists` limits the workspace index to the files referenced by
-one or more filelists, which speeds up indexing on large projects. Each entry
-pairs a filelist `file` with the `base` directory its paths are resolved against;
-entries support `-f` / `-F` includes, `-incfile` source lists, comments, quoted
-paths, `+incdir+` / `-I` search directories and `$VAR` expansion. `` `include `` directives inside the
-listed files are followed too (searching the including file's directory, then
-the include directories, then `base`), so a package header that only includes
-other files still pulls them into the index. Leave the list empty to index the
-whole workspace.
+| Setting | Purpose |
+| --- | --- |
+| `fileLists` | Restrict indexing to files referenced by one or more filelists. Supports `-f`/`-F`, `-incfile`, `+incdir+`, `-I`, comments, quoted paths and environment variables. |
+| `includeDirs` | Extra directories searched for `` `include `` directives. |
+| `vExt` / `svExt` / `vhExt` / `svhExt` | File extensions indexed for each language/header type. |
+| `hoverMaxSize` / `portDirectionColors` | Limit automatic hover by file size; set port direction colors. |
+| `autoconnect` / `fillparam` / `paramOneline` / `instOneline` | Module instantiation and parameter behavior. |
+| `instancePrefix` / `instanceSuffix` / `declStart` / `declEnd` | Generated instance names and auto-declaration location. |
+| `clkName` / `rstName` / `rstNName` / `disableAutocomplete` | Snippet clock/reset names and smart completion toggle. |
+| `maxLineLength` / `paramPortAlignment` / `alignCommaSemicolon` / `alignmentIgnoreTick` | Alignment behavior. |
+| `debug` | Log index and command details to the **SystemVerilog** output channel. |
 
-`systemverilog.includeDirs` adds global include search directories (absolute or
-relative to the workspace root), mirroring the `+incdir+` paths of your compile
-command. They are searched for every `` `include `` in addition to the including
-file's directory and any `+incdir+` / `-I` paths declared in the filelists. Use
-them when your flists do not carry the include paths (for example when they come
-from the build script). **Validate** next to this section checks that each
-directory exists and lists every `` `include `` that still cannot be resolved.
-
-Both settings and the port hover colors can be edited from **Verilog:
-Configure Settings**, where **Validate** checks each entry and reports how many
-files resolve (and which are missing) before you save. The panel also has a
-**Check Indexed File** box: type a path (absolute or relative to the workspace
-root) to see whether it is part of the current index, and, when filelists are
-used, which entry pulls it in.
+Leave `fileLists` empty to index the whole workspace. Includes are resolved from
+the including file's directory first, then from the configured include directories.
 
 ## Building
 
 ```sh
 npm install
 npm run compile
-```
-
-Run the tests for the ported parser and beautifier:
-
-```sh
 npm test
 ```
 
-Consistency of the parser / beautifier port is verified against the test data of
-the original project (17 parser cases and 27 beautifier cases pass).
-
-`npm test` also runs an activation smoke test (`test/activation.test.js`) that
-loads `out/extension.js` with a `vscode` stub while making every bare npm
-specifier unresolvable. This reproduces the published environment: CI packages
-with `vsce publish --no-dependencies`, so **`node_modules` is not shipped**. Any
-turn runtime dependency must therefore be loaded lazily (see
-`src/languageServer.ts`) — a top-level `import` of an npm package other than
-`vscode` will fail this test and block the release.
+`npm test` covers the parser, beautifier, filelists, instance lookup and
+activation. Compile before testing. The activation test simulates the published
+environment, where `node_modules` is not shipped.
 
 ## License and attribution
 
-Derived from the Sublime Text SystemVerilog plugin by TheClams, licensed under
-the Apache License 2.0. See `NOTICE` and `LICENSE`.
+Derived from the Sublime Text SystemVerilog plugin by TheClams, licensed under the
+Apache License 2.0. See `NOTICE` and `LICENSE`.

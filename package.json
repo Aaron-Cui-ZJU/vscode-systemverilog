@@ -63,77 +63,77 @@
     "commands": [
       {
         "command": "systemverilog.showType",
-        "title": "Verilog: Show Signal/Variable Type",
+        "title": "Show Signal/Variable Type",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.instantiateModule",
-        "title": "Verilog: Instantiate Module",
+        "title": "Instantiate Module",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.align",
-        "title": "Verilog: Alignment",
+        "title": "Alignment",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.reindent",
-        "title": "Verilog: Reindent",
+        "title": "Reindent",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.toggleDotStar",
-        "title": "Verilog: Toggle .*",
+        "title": "Toggle .*",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.gotoDriver",
-        "title": "Verilog: GoTo Driver",
+        "title": "GoTo Driver",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.gotoDeclaration",
-        "title": "Verilog: GoTo Declaration",
+        "title": "GoTo Declaration",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.insertFsmTemplate",
-        "title": "Verilog: Insert FSM template",
+        "title": "Insert FSM template",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.showHierarchy",
-        "title": "Verilog: Show Module Hierarchy",
+        "title": "Show Module Hierarchy",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.findInstance",
-        "title": "Verilog: Find Instance",
+        "title": "Find Instance",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.gotoInstantiator",
-        "title": "Verilog: Go to Instantiating Module",
+        "title": "Go to Instantiating Module",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.showInstances",
-        "title": "Verilog: Show Module Instances",
+        "title": "Show Module Instances",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.findUnusedSignals",
-        "title": "Verilog: Find Unused Signals",
+        "title": "Find Unused Signals",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.lint",
-        "title": "Verilog: Linting",
+        "title": "Linting",
         "category": "Verilog"
       },
       {
         "command": "systemverilog.configureSettings",
-        "title": "Verilog: Configure Settings",
+        "title": "Configure Settings",
         "category": "Verilog"
       }
     ],
@@ -315,21 +315,6 @@
           "type": "number",
           "default": -1,
           "description": "Max file size (bytes) to display popup info automatically when hovering a valid symbol. -1 disables the limit, 0 disables the feature."
-        },
-        "systemverilog.tooltipShowModuleOnPort": {
-          "type": "boolean",
-          "default": false,
-          "description": "Include module type and instance when showing tooltip for a port."
-        },
-        "systemverilog.tooltipShowRefs": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show references to module/interface."
-        },
-        "systemverilog.tooltipShowSignalLinks": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show links to driver/reference for signals."
         },
         "systemverilog.portDirectionColors": {
           "type": "object",
@@ -549,11 +534,6 @@
           "default": 1,
           "description": "Number of indentation levels for signal declaration."
         },
-        "systemverilog.autocompleteMaxLvl": {
-          "type": "number",
-          "default": 5,
-          "description": "Max hierarchy level for autocompletion. -1 for no limit."
-        },
         "systemverilog.disableAutocomplete": {
           "type": "boolean",
           "default": false,
@@ -590,11 +570,6 @@
           "type": "array",
           "default": [],
           "description": "User additions/overrides for the UVM completion list."
-        },
-        "systemverilog.hierarchyNewWindow": {
-          "type": "boolean",
-          "default": false,
-          "description": "Open the module hierarchy in a new window."
         }
       }
     }

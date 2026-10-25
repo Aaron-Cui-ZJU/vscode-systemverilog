@@ -10,9 +10,6 @@ export interface SvConfig {
   svhExt: string[];
   tooltip: boolean;
   hoverMaxSize: number;
-  tooltipShowModuleOnPort: boolean;
-  tooltipShowRefs: boolean;
-  tooltipShowSignalLinks: boolean;
   portDirectionColors: Record<string, string>;
   oneBindPerLine: boolean;
   oneDeclPerLine: boolean;
@@ -49,10 +46,8 @@ export interface SvConfig {
   declStart: string;
   declEnd: string;
   declIndent: number;
-  autocompleteMaxLvl: number;
   disableAutocomplete: boolean;
   debug: boolean;
-  hierarchyNewWindow: boolean;
   languageServerEnabled: boolean;
   languageServerCommand: string;
   languageServerArgs: string[];
@@ -127,9 +122,6 @@ function readConfig(): SvConfig {
     svhExt: arr(c.get('svhExt')),
     tooltip: c.get('tooltip', true),
     hoverMaxSize: c.get('hoverMaxSize', -1),
-    tooltipShowModuleOnPort: c.get('tooltipShowModuleOnPort', false),
-    tooltipShowRefs: c.get('tooltipShowRefs', true),
-    tooltipShowSignalLinks: c.get('tooltipShowSignalLinks', false),
     portDirectionColors: mergePortDirectionColors(c.get('portDirectionColors')),
     oneBindPerLine: c.get('oneBindPerLine', true),
     oneDeclPerLine: c.get('oneDeclPerLine', false),
@@ -166,10 +158,8 @@ function readConfig(): SvConfig {
     declStart: c.get('declStart', 'Signals declaration'),
     declEnd: c.get('declEnd', '/*----'),
     declIndent: c.get('declIndent', 1),
-    autocompleteMaxLvl: c.get('autocompleteMaxLvl', 5),
     disableAutocomplete: c.get('disableAutocomplete', false),
     debug: c.get('debug', false),
-    hierarchyNewWindow: c.get('hierarchyNewWindow', false),
     // The LSP integration (src/languageServer.ts, src/slangConfig.ts) is kept in
     // source for future development but disabled: it needs the whole design to
     // compile in an external language server, which projects that depend on
