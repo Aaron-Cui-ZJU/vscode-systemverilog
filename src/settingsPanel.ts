@@ -8,6 +8,17 @@ const DIRECTIONS = Object.keys(DEFAULT_PORT_DIRECTION_COLORS);
 
 let panel: vscode.WebviewPanel | undefined;
 
+// Filelists and include directories describe one project's compile command, so the
+// panel writes them to the workspace (`.vscode/settings.json`) instead of user
+// settings; otherwise a list configured for one project would be used by every
+// other project. Without an open folder there is no workspace to write to.
+function settingsScope(): { target: vscode.ConfigurationTarget; label: string } {
+  if (vscode.workspace.workspaceFolders?.length) {
+    return { target: vscode.ConfigurationTarget.Workspace, label: 'workspace settings' };
+  }
+  return { target: vscode.ConfigurationTarget.Global, label: 'user settings' };
+}
+
 export function registerSettingsPanel(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -56,11 +67,15 @@ async function onMessage(msg: unknown): Promise<void> {
     const fileLists = sanitizeFileLists(m.fileLists);
     const includeDirs = sanitizeIncludeDirs(m.includeDirs);
     await persist(colors, fileLists, includeDirs);
-    logger.info(`configureSettings: saved (${fileLists.length} filelist(s), ${includeDirs.length} include dir(s))`);
-    vscode.window.showInformationMessage('SystemVerilog settings saved.');
+    const scope = settingsScope();
+    logger.info(
+      `configureSettings: saved to ${scope.label} (${fileLists.length} filelist(s), ${includeDirs.length} include dir(s))`
+    );
+    vscode.window.showInformationMessage(`SystemVerilog settings saved to ${scope.label}.`);
+    warnAboutUserSettings();
   } else if (m.type === 'reset') {
     await persist({ ...DEFAULT_PORT_DIRECTION_COLORS }, [], []);
-    logger.info('configureSettings: reset to defaults');
+    logger.info(`configureSettings: reset to defaults (${settingsScope().label})`);
     vscode.window.showInformationMessage('SystemVerilog settings reset to defaults.');
   } else if (m.type === 'validate') {
     const fileLists = sanitizeFileLists(m.fileLists);
@@ -135,6 +150,8 @@ function sanitizeIncludeDirs(v: unknown): string[] {
   return out;
 }
 
+// Port hover colors are a display preference, so they stay in user settings; the
+// index settings follow the workspace.
 async function persist(
   colors: Record<string, string>,
   fileLists: FileListSetting[],
@@ -142,8 +159,41 @@ async function persist(
 ): Promise<void> {
   const cfg = vscode.workspace.getConfiguration('systemverilog');
   await cfg.update('portDirectionColors', colors, vscode.ConfigurationTarget.Global);
-  await cfg.update('fileLists', fileLists, vscode.ConfigurationTarget.Global);
-  await cfg.update('includeDirs', includeDirs, vscode.ConfigurationTarget.Global);
+  const { target } = settingsScope();
+  await cfg.update('fileLists', fileLists, target);
+  await cfg.update('includeDirs', includeDirs, target);
+}
+
+// A user-level value still applies to every workspace without an override, which is
+// the cross-project leak that saving to workspace settings is meant to prevent.
+function warnAboutUserSettings(): void {
+  if (!vscode.workspace.workspaceFolders?.length) {
+    return;
+  }
+  const cfg = vscode.workspace.getConfiguration('systemverilog');
+  const stale: string[] = [];
+  for (const key of ['fileLists', 'includeDirs']) {
+    const value = cfg.inspect<unknown[]>(key)?.globalValue;
+    if (Array.isArray(value) && value.length > 0) {
+      stale.push(`systemverilog.${key}`);
+    }
+  }
+  if (!stale.length) {
+    return;
+  }
+  logger.warn(`configureSettings: user settings still define ${stale.join(', ')}`);
+  const verb = stale.length === 1 ? 'is' : 'are';
+  const pronoun = stale.length === 1 ? 'it' : 'them';
+  void vscode.window
+    .showWarningMessage(
+      `Saved for this workspace, but ${stale.join(' and ')} ${verb} still set in your user settings and ${verb} applied to every project without an override. Remove ${pronoun} to keep projects independent.`,
+      'Open User Settings'
+    )
+    .then((choice) => {
+      if (choice) {
+        void vscode.commands.executeCommand('workbench.action.openSettings', '@modified');
+      }
+    });
 }
 
 function getNonce(): string {
@@ -166,6 +216,9 @@ function settingsHtml(
   includeDirs: string[]
 ): string {
   const nonce = getNonce();
+  const scopeNote = vscode.workspace.workspaceFolders?.length
+    ? 'Filelists and include directories are saved to this workspace (<code>.vscode/settings.json</code>), so other projects are unaffected. Port hover colors stay in your user settings.'
+    : 'No workspace folder is open, so filelists and include directories are saved to your user settings and apply to every project.';
   const initial = JSON.stringify(colors).replace(/</g, '\\u003c');
   const defaults = JSON.stringify(DEFAULT_PORT_DIRECTION_COLORS).replace(/</g, '\\u003c');
   const directions = JSON.stringify(DIRECTIONS);
@@ -212,6 +265,7 @@ function settingsHtml(
 </head>
 <body>
   <h1>SystemVerilog Settings</h1>
+  <p class="hint">${scopeNote}</p>
 
   <h2>Port Hover Direction Colors</h2>
   <p class="hint">Pick a color or type any CSS color, e.g. <code>#ff8800</code> or <code>var(--vscode-charts-blue)</code>.</p>

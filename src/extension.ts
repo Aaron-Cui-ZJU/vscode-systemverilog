@@ -109,6 +109,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       logger.info('workspace folders changed, rebuilding index');
+      invalidateConfigCache();
       initIndex();
       INDEX.start();
     }),

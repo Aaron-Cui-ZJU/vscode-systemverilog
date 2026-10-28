@@ -59,6 +59,9 @@ keybinding-only.
 
 All settings are under `systemverilog.*`. **Verilog: Configure Settings** provides
 the full UI and can validate filelists, include directories and indexed files.
+`fileLists` and `includeDirs` describe one project's compile command, so the panel
+saves them to the workspace (`.vscode/settings.json`) and other projects keep their
+own lists. Port hover colors are a display preference and stay in user settings.
 
 | Setting | Purpose |
 | --- | --- |

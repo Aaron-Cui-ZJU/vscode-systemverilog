@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.2.7 (2026-10-28)
+
+- Save `fileLists` and `includeDirs` per workspace so each project keeps its own filelists
+
+
 ## 1.2.6 (2026-10-25)
 
 - Simplify README and remove unused settings

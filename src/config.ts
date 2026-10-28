@@ -100,7 +100,11 @@ export function getConfig(): SvConfig {
 }
 
 function readConfig(): SvConfig {
-  const c = vscode.workspace.getConfiguration('systemverilog');
+  // Resolve against the open folder so the project's `.vscode/settings.json` is
+  // used for `fileLists` / `includeDirs`. Multi-root workspaces are not supported;
+  // the first folder wins, matching resolveWorkspacePath in indexer.ts.
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  const c = vscode.workspace.getConfiguration('systemverilog', folder?.uri);
   const arr = (v: any): string[] => (Array.isArray(v) ? v.map(String) : []);
   const cl = (v: any): CompletionEntry[] =>
     Array.isArray(v) ? (v.filter((x) => Array.isArray(x)) as CompletionEntry[]) : [];
