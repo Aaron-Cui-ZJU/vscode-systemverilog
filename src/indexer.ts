@@ -11,7 +11,8 @@ import {
   parsePackage,
 } from './parser';
 import { getConfig, SvConfig } from './config';
-import { FileListSetting, followIncludes, resolveFileList } from './filelist';
+import { FileListSetting, followIncludes, resolveFileList, resolveSourcePath } from './filelist';
+import { expandGlobDirs, hasGlob } from './glob';
 import { InstantiationSite, findAllInstantiationSites } from './instances';
 import { documentModuleInfo } from './documentCache';
 import * as logger from './logger';
@@ -64,6 +65,10 @@ export interface IncludeDirStatus {
   path: string;
   exists: boolean;
   isDirectory: boolean;
+  // Set when the entry contains `*`, `?` or `**`; `matches` holds the directories
+  // it expanded to.
+  pattern?: boolean;
+  matches?: string[];
 }
 
 export interface IncludeDirsValidation {
@@ -101,6 +106,29 @@ function resolveWorkspacePath(p: string): string {
   return folder ? path.join(folder.uri.fsPath, p) : path.resolve(p);
 }
 
+// `includeDirs` entries may contain `*`, `?` or `**` segments (e.g. `rtl/*/include`).
+// Expand them to real directories, in the configured order, so the include search
+// path is a plain list again. Entries without wildcards are kept as-is even when
+// they do not exist, so validation can report them.
+export function expandIncludeDirs(dirs: string[], root?: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const dir of dirs) {
+    const entry = dir.trim();
+    if (!entry) {
+      continue;
+    }
+    const abs = root && !path.isAbsolute(entry) ? path.join(root, entry) : resolveWorkspacePath(entry);
+    for (const match of expandGlobDirs(abs)) {
+      if (!seen.has(match)) {
+        seen.add(match);
+        out.push(match);
+      }
+    }
+  }
+  return out;
+}
+
 function readTextSync(p: string): string | null {
   try {
     return fs.readFileSync(p, 'utf8');
@@ -114,7 +142,7 @@ function readTextSync(p: string): string | null {
 export function validateFileLists(entries: FileListSetting[]): FileListValidation[] {
   const cfg = getConfig();
   const exts = supportedExtensions(cfg);
-  const globalInc = cfg.includeDirs.map((d) => resolveWorkspacePath(d));
+  const globalInc = expandIncludeDirs(cfg.includeDirs);
   const results: FileListValidation[] = [];
   for (const entry of entries) {
     const listPath = resolveWorkspacePath(entry.file);
@@ -173,6 +201,10 @@ export function validateIncludeDirs(
 ): IncludeDirsValidation {
   const dirs: IncludeDirStatus[] = includeDirs.map((dir) => {
     const p = resolveWorkspacePath(dir);
+    if (hasGlob(dir)) {
+      const matches = expandGlobDirs(p);
+      return { dir, path: p, exists: matches.length > 0, isDirectory: matches.length > 0, pattern: true, matches };
+    }
     let isDirectory = false;
     try {
       isDirectory = fs.statSync(p).isDirectory();
@@ -182,7 +214,7 @@ export function validateIncludeDirs(
     return { dir, path: p, exists: fs.existsSync(p), isDirectory };
   });
 
-  const globalInc = includeDirs.map((d) => resolveWorkspacePath(d));
+  const globalInc = expandIncludeDirs(includeDirs);
   const unresolved: { include: string; from: string }[] = [];
   const seen = new Set<string>();
   for (const entry of entries.filter((l) => l.file && l.base)) {
@@ -440,7 +472,7 @@ export class WorkspaceIndex {
       return { files, scope: files.map((f) => f.toString()), via, restricted: false };
     }
     const exts = supportedExtensions(cfg);
-    const globalInc = cfg.includeDirs.map((d) => resolveWorkspacePath(d));
+    const globalInc = expandIncludeDirs(cfg.includeDirs);
     const existing = new Map<string, vscode.Uri>();
     const scope = new Set<string>();
     for (const entry of entries) {
@@ -595,16 +627,18 @@ export class WorkspaceIndex {
   async inspectFile(input: string): Promise<IndexedFileInfo> {
     await this.ensureIndex();
     const abs = resolveWorkspacePath(input.trim());
-    const uri = vscode.Uri.file(abs);
+    // A link file stands in for the file it points at, so check the target.
+    const source = resolveSourcePath(abs, readTextSync);
+    const uri = vscode.Uri.file(source);
     const key = uri.toString();
     const exts = supportedExtensions(getConfig());
-    const supported = exts.has(path.extname(abs).slice(1).toLowerCase());
+    const supported = exts.has(path.extname(source).slice(1).toLowerCase());
     const indexed = this.restricted ? this.scope.has(key) : this.fileSet.has(key);
     return {
       input,
-      path: abs,
+      path: source,
       relative: vscode.workspace.asRelativePath(uri),
-      exists: fs.existsSync(abs),
+      exists: fs.existsSync(source),
       supported,
       mode: this.restricted ? 'fileList' : 'all',
       indexed,

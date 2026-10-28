@@ -66,6 +66,10 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'systemverilog.gotoPortDriver',
       logger.command('systemverilog.gotoPortDriver', (arg?: unknown) => gotoPortSignal(arg, 'driver'))
+    ),
+    vscode.commands.registerCommand(
+      'systemverilog.gotoSignalUsers',
+      logger.command('systemverilog.gotoSignalUsers', (arg?: unknown) => gotoSignalUsers(arg))
     )
   );
 
@@ -98,6 +102,18 @@ export function registerNavigation(context: vscode.ExtensionContext): void {
         const md = await buildHover(document, word, position);
         if (!md) {
           return undefined;
+        }
+        // Hovering the net wired into an input port also offers the fan-out below
+        // the instance, without replacing the hover for the net itself.
+        const conn = findPortConnectionAt(document, position);
+        if (conn) {
+          const dir = await portDirection(conn.moduleType, conn.port);
+          if (dir === 'input' || dir === 'inout') {
+            md.appendMarkdown(
+              '\n\n' +
+                commandLink(`Go to modules using \`${conn.port}\``, 'systemverilog.gotoSignalUsers', conn)
+            );
+          }
         }
         return new vscode.Hover(md, document.getWordRangeAtPosition(position));
       },
@@ -372,6 +388,35 @@ function findPortBindingAt(document: vscode.TextDocument, position: vscode.Posit
   return null;
 }
 
+// Detect whether `position` sits on the net connected to a port binding, e.g. on
+// `sig` in `.clk (sig)`, and return the instantiated module and its port.
+function findPortConnectionAt(
+  document: vscode.TextDocument,
+  position: vscode.Position
+): PortBinding | null {
+  const text = document.getText();
+  const offset = document.offsetAt(position);
+  const bindRe = /\.\s*([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)/g;
+  let m: RegExpExecArray | null;
+  while ((m = bindRe.exec(text)) !== null) {
+    // The last occurrence of the connection name is the one inside the parens,
+    // even when the port and the net share a name (`.clk (clk)`).
+    const sigStart = m.index + m[0].lastIndexOf(m[2]);
+    if (offset < sigStart) {
+      break;
+    }
+    if (offset < sigStart + m[2].length) {
+      const openParen = enclosingParenOpen(text, m.index + m[0].indexOf(m[1]));
+      if (openParen < 0) {
+        return null;
+      }
+      const moduleType = instanceTypeBefore(text, openParen);
+      return moduleType ? { moduleType, port: m[1] } : null;
+    }
+  }
+  return null;
+}
+
 function isIdentChar(c: string): boolean {
   return /[A-Za-z0-9_]/.test(c);
 }
@@ -518,7 +563,7 @@ async function buildPortHover(binding: PortBinding): Promise<vscode.MarkdownStri
   } else if (dir === 'input' || dir === 'inout') {
     md.appendMarkdown(
       '\n\n' +
-        commandLink(`Go to first use of \`${binding.port}\``, 'systemverilog.gotoPortReference', {
+        commandLink(`Go to modules using \`${binding.port}\``, 'systemverilog.gotoSignalUsers', {
           module: binding.moduleType,
           port: binding.port,
         })
@@ -565,6 +610,21 @@ async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promi
   if (!moduleName) {
     return false;
   }
+  if (kind === 'driver') {
+    // Follow wrapper levels that only pass the port along, so the jump lands where
+    // the signal is actually assigned rather than on the nearest binding.
+    const hop = await resolvePortDriver(moduleName, a.port);
+    if (hop) {
+      logger.info(
+        `gotoPort driver "${a.port}" in ${moduleName} -> ${vscode.workspace.asRelativePath(hop.uri)} (${hop.hops} hop(s))`
+      );
+      await openAt(hop.uri, hop.offset);
+      return true;
+    }
+    logger.debug(`gotoPort driver "${a.port}": no driver found in ${moduleName}`);
+    vscode.window.showInformationMessage(`No driver of "${a.port}" found in ${moduleName}`);
+    return false;
+  }
   const syms = await INDEX.findSymbols(moduleName, ['module', 'interface']);
   for (const s of syms) {
     const text = await INDEX.readFile(s.uri);
@@ -572,16 +632,7 @@ async function gotoPortSignal(arg: unknown, kind: 'reference' | 'driver'): Promi
     if (!range) {
       continue;
     }
-    let offset: number | null;
-    if (kind === 'driver') {
-      offset = findDriverAt(text, a.port, range);
-      if (offset === null) {
-        const sd = await findSubmoduleDriverAt(text, a.port, range);
-        offset = sd ? sd.offset : null;
-      }
-    } else {
-      offset = findFirstUseAt(text, a.port, range);
-    }
+    const offset = findFirstUseAt(text, a.port, range);
     if (offset !== null) {
       logger.info(
         `gotoPort ${kind} "${a.port}" in ${moduleName} -> ${vscode.workspace.asRelativePath(s.uri)}`
@@ -752,7 +803,7 @@ function findFirstUseAt(text: string, signal: string, range: TextSpan): number |
 
 // Location where `signal` is driven inside the module body by an assignment.
 // The optional `[...]` handles indexed targets used in generate loops.
-function findDriverAt(text: string, signal: string, range: TextSpan): number | null {
+function findAssignmentDriverAt(text: string, signal: string, range: TextSpan): number | null {
   const esc = escapeRe(signal);
   const body = text.slice(range.bodyStart, range.end);
   const base = range.bodyStart;
@@ -774,7 +825,6 @@ function findDriverAt(text: string, signal: string, range: TextSpan): number | n
   const patterns = [
     '(?:^|[^\\w.])(' + esc + ')\\b(?:\\s*\\[[^\\]]*\\])*\\s*(?:<=|=)(?!=)',
     '\\bassign\\b[^;\\n]*\\b(' + esc + ')\\b(?:\\s*\\[[^\\]]*\\])*\\s*=',
-    '\\boutput\\b[^;\\n]*\\b(' + esc + ')\\b',
   ];
   for (const source of patterns) {
     const re = new RegExp(source, 'g');
@@ -786,6 +836,24 @@ function findDriverAt(text: string, signal: string, range: TextSpan): number | n
       }
       return off;
     }
+  }
+  return null;
+}
+
+// Port declaration of `signal` in `text`, either in the module header (ANSI) or in
+// the body. Used as the last resort for a port that nothing drives locally: it
+// still puts the cursor in the module that owns the port.
+function findPortDeclAt(text: string, signal: string): number | null {
+  const esc = escapeRe(signal);
+  const spans = commentSpans(text);
+  const re = new RegExp('^[ \\t]*(?:input|output|inout|ref)\\b[^;\\n]*\\b(' + esc + ')\\b', 'gm');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const off = m.index + m[0].indexOf(m[1]);
+    if (inSpans(spans, off)) {
+      continue;
+    }
+    return off;
   }
   return null;
 }
@@ -856,6 +924,469 @@ async function portDirection(moduleType: string, portName: string): Promise<stri
     ((port.type || '').match(/^(input|output|inout|ref)\b/) || [])[0] ||
     null
   );
+}
+
+interface DriverHop {
+  uri: vscode.Uri;
+  offset: number;
+  module: string;
+  port: string;
+  hops: number;
+}
+
+// Follow one port down the hierarchy while a module only connects it onward (its
+// port is bound to the output of a deeper instance), so a chain of wrapper levels
+// does not stop the jump. The deepest module that actually assigns the signal
+// wins; the last resolvable connection is used when the chain ends without one.
+const MAX_DRIVER_HOPS = 16;
+
+async function resolvePortDriver(
+  moduleType: string,
+  port: string,
+  visited: Set<string> = new Set(),
+  hops: number = 0
+): Promise<DriverHop | null> {
+  const key = moduleType + '::' + port;
+  if (hops > MAX_DRIVER_HOPS || visited.has(key)) {
+    return null;
+  }
+  visited.add(key);
+  const syms = await INDEX.findSymbols(moduleType, ['module', 'interface']);
+  for (const s of syms) {
+    const text = await INDEX.readFile(s.uri);
+    const range = findModuleRange(text, moduleType);
+    if (!range) {
+      continue;
+    }
+    const assigned = findAssignmentDriverAt(text, port, range);
+    if (assigned !== null) {
+      return { uri: s.uri, offset: assigned, module: moduleType, port, hops };
+    }
+    const sd = await findSubmoduleDriverAt(text, port, range);
+    if (sd) {
+      const deeper = await resolvePortDriver(sd.moduleType, sd.port, visited, hops + 1);
+      if (deeper) {
+        return deeper;
+      }
+      // The deeper module is unknown or has no driver: stop at the binding.
+      return { uri: s.uri, offset: sd.offset, module: moduleType, port, hops };
+    }
+    const decl = findPortDeclAt(text, port);
+    if (decl !== null) {
+      return { uri: s.uri, offset: decl, module: moduleType, port, hops };
+    }
+  }
+  return null;
+}
+
+interface InputDriverCandidate {
+  uri: vscode.Uri;
+  text: string;
+  parent: string;
+  instance: string;
+  line: number;
+  offset: number;
+  signal: string | null;
+}
+
+function lineStartOffset(text: string, line: number): number {
+  let off = 0;
+  for (let i = 0; i < line; i++) {
+    const nl = text.indexOf('\n', off);
+    if (nl < 0) {
+      return off;
+    }
+    off = nl + 1;
+  }
+  return off;
+}
+
+// Binding of `port` in one instantiation: where the connection expression starts
+// and, when it is a plain identifier, the net that feeds the port. `.*` counts as
+// an implicit same-name connection.
+function findPortBindingIn(
+  text: string,
+  instance: string,
+  line: number,
+  port: string
+): { offset: number; signal: string | null } | null {
+  const lineStart = lineStartOffset(text, line);
+  const escPort = escapeRe(port);
+  let nameAt = text.indexOf(instance, lineStart);
+  while (nameAt >= 0) {
+    const open = portListOpenAfter(text, nameAt + instance.length);
+    if (open >= 0) {
+      const close = matchParen(text, open);
+      if (close < 0) {
+        return null;
+      }
+      const body = text.slice(open + 1, close);
+      const m = new RegExp('\\.\\s*' + escPort + '\\s*\\(').exec(body);
+      if (m) {
+        const connOpen = open + 1 + m.index + m[0].length - 1;
+        const connClose = matchParen(text, connOpen);
+        if (connClose < 0) {
+          return null;
+        }
+        const raw = text.slice(connOpen + 1, connClose);
+        const expr = raw.trim();
+        const offset = connOpen + 1 + (raw.length - raw.trimStart().length);
+        return { offset, signal: /^[A-Za-z_]\w*$/.test(expr) ? expr : null };
+      }
+      const implicitAt = body.search(/\.\s*\*/);
+      if (implicitAt >= 0) {
+        return { offset: open + 1 + implicitAt, signal: port };
+      }
+      return null;
+    }
+    nameAt = text.indexOf(instance, nameAt + 1);
+  }
+  return null;
+}
+
+// Port-list `(` right after an instance name, or -1 when `from` does not sit on an
+// instance name (a `#(` parameter override means the identifier was the module
+// type, so the caller keeps looking). Skips an optional array range `[...]`.
+function portListOpenAfter(text: string, from: number): number {
+  let i = from;
+  while (i < text.length && /\s/.test(text[i])) {
+    i += 1;
+  }
+  if (text[i] === '#') {
+    return -1;
+  }
+  if (text[i] === '[') {
+    let depth = 0;
+    while (i < text.length) {
+      if (text[i] === '[') {
+        depth += 1;
+      } else if (text[i] === ']') {
+        depth -= 1;
+        if (depth === 0) {
+          i += 1;
+          break;
+        }
+      }
+      i += 1;
+    }
+    while (i < text.length && /\s/.test(text[i])) {
+      i += 1;
+    }
+  }
+  return text[i] === '(' ? i : -1;
+}
+
+// Every instantiation of `moduleName` that binds `port`, resolved to the parent
+// text and the binding position. At most `maxSignalUsers` are returned for the
+// picker.
+async function collectInputCandidates(
+  moduleName: string,
+  port: string
+): Promise<InputDriverCandidate[]> {
+  const sites = await INDEX.findInstantiations(moduleName);
+  const max = getConfig().maxSignalUsers;
+  const candidates: InputDriverCandidate[] = [];
+  const seen = new Set<string>();
+  for (const site of sites.slice(0, max)) {
+    const uri = site.uri ? vscode.Uri.parse(site.uri) : vscode.Uri.file(site.file);
+    const key = uri.toString() + '|' + site.line + '|' + site.instance;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const text = await INDEX.readFile(uri);
+    const binding = findPortBindingIn(text, site.instance, site.line, port);
+    if (!binding) {
+      continue;
+    }
+    candidates.push({
+      uri,
+      text,
+      parent: site.parent,
+      instance: site.instance,
+      line: site.line,
+      offset: binding.offset,
+      signal: binding.signal,
+    });
+  }
+  return candidates;
+}
+
+// Walk up for an input port: find the instantiations of `moduleName`, take the
+// binding of `port` in each, and jump to whatever drives it there. A binding fed by
+// another input port keeps walking up, so wrapper levels are skipped. With several
+// instantiations the user picks one (at most `maxSignalUsers` are listed).
+async function gotoInputPortDriver(moduleName: string, port: string): Promise<boolean> {
+  const visited = new Set<string>();
+  let currentModule = moduleName;
+  let currentPort = port;
+  let fallback: { uri: vscode.Uri; offset: number } | null = null;
+  for (let hops = 0; hops < 8; hops++) {
+    const key = currentModule + '::' + currentPort;
+    if (visited.has(key)) {
+      break;
+    }
+    visited.add(key);
+    const candidates = await collectInputCandidates(currentModule, currentPort);
+    if (!candidates.length) {
+      break;
+    }
+    let chosen = candidates[0];
+    if (candidates.length > 1) {
+      const items = candidates.map((c) => ({
+        label: c.parent || '(top level)',
+        description: 'instance ' + c.instance,
+        detail: vscode.workspace.asRelativePath(c.uri) + ':' + (c.line + 1),
+      }));
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: `Modules driving input ${currentModule}.${currentPort}`,
+        matchOnDescription: true,
+        matchOnDetail: true,
+      });
+      if (!pick) {
+        return true;
+      }
+      chosen = candidates[items.indexOf(pick)];
+    }
+    fallback = { uri: chosen.uri, offset: chosen.offset };
+    const range = chosen.parent ? findModuleRange(chosen.text, chosen.parent) : null;
+    const signal = chosen.signal;
+    if (signal && range) {
+      const assigned = findAssignmentDriverAt(chosen.text, signal, range);
+      if (assigned !== null) {
+        logger.info(
+          `gotoDriver input "${port}" in ${moduleName} -> assignment in ${chosen.parent} at ${vscode.workspace.asRelativePath(chosen.uri)}`
+        );
+        await openAt(chosen.uri, assigned);
+        return true;
+      }
+      const sd = await findSubmoduleDriverAt(chosen.text, signal, range);
+      if (sd) {
+        const hop = await resolvePortDriver(sd.moduleType, sd.port);
+        if (hop) {
+          logger.info(
+            `gotoDriver input "${port}" in ${moduleName} -> ${hop.module}.${hop.port} at ${vscode.workspace.asRelativePath(hop.uri)} (${hop.hops} hop(s))`
+          );
+          await openAt(hop.uri, hop.offset);
+          return true;
+        }
+      }
+      // The net feeding the port is itself an input of the parent: keep walking up.
+      if ((await portDirection(chosen.parent, signal)) === 'input') {
+        currentModule = chosen.parent;
+        currentPort = signal;
+        continue;
+      }
+    }
+    logger.info(
+      `gotoDriver input "${port}" in ${moduleName} -> binding ${chosen.parent}.${chosen.instance} at ${vscode.workspace.asRelativePath(chosen.uri)}:${chosen.line + 1}`
+    );
+    await openAt(chosen.uri, chosen.offset);
+    return true;
+  }
+  if (fallback) {
+    // The chain ended without a driver; at least show the deepest binding found.
+    await openAt(fallback.uri, fallback.offset);
+    return true;
+  }
+  return false;
+}
+
+interface SignalPass {
+  moduleType: string;
+  port: string;
+  offset: number;
+}
+
+interface SignalScan {
+  // First place the module actually uses the signal (not a declaration and not a
+  // connection to a submodule).
+  use: number | null;
+  // Connections that only hand the signal to a submodule input, so the search can
+  // continue below this module.
+  passes: SignalPass[];
+}
+
+// Words that start a declaration. An occurrence whose statement head contains one
+// of them is a declaration, not a use.
+const DECL_KEYWORDS =
+  /\b(?:input|output|inout|ref|wire|tri|wand|wor|reg|logic|bit|byte|shortint|int|longint|integer|time|real|shortreal|string|parameter|localparam|typedef|genvar)\b/;
+
+function isDeclarationOccurrence(text: string, offset: number): boolean {
+  let start = offset;
+  while (start > 0 && !';{}()\n'.includes(text[start - 1])) {
+    start--;
+  }
+  return DECL_KEYWORDS.test(text.slice(start, offset));
+}
+
+// Scan one module body for `signal`: where it is used for real, and where it is
+// only wired into a submodule input port.
+async function scanSignal(text: string, signal: string, range: TextSpan): Promise<SignalScan> {
+  const body = text.slice(range.bodyStart, range.end);
+  const base = range.bodyStart;
+  const comments = commentSpans(text);
+  const signalRe = new RegExp('\\b' + escapeRe(signal) + '\\b');
+  const dirCache = new Map<string, string | null>();
+  const wiring: [number, number][] = [];
+  const passes: SignalPass[] = [];
+  const seen = new Set<string>();
+  const portRe = /\.\s*([A-Za-z_]\w*)\s*\(/g;
+  let m: RegExpExecArray | null;
+  while ((m = portRe.exec(body)) !== null) {
+    const portName = m[1];
+    const nameOffset = m.index + m[0].indexOf(portName);
+    const openParen = enclosingParenOpen(body, nameOffset);
+    if (openParen < 0) {
+      continue;
+    }
+    const moduleType = instanceTypeBefore(body, openParen);
+    if (!moduleType) {
+      continue;
+    }
+    const connOpen = m.index + m[0].length - 1;
+    const connClose = matchParen(body, connOpen);
+    if (connClose === -1) {
+      continue;
+    }
+    const conn = body.slice(connOpen + 1, connClose);
+    const at = conn.search(signalRe);
+    if (at < 0) {
+      continue;
+    }
+    const start = base + connOpen + 1;
+    if (inSpans(comments, start + at)) {
+      continue;
+    }
+    // Everything from `.port` to the closing paren is wiring: the port name itself
+    // must not count as a use.
+    wiring.push([base + m.index, base + connClose]);
+    // Only a plain identifier is followed down; an expression is wiring without a
+    // single port to continue into.
+    if (!/^[A-Za-z_]\w*$/.test(conn.trim())) {
+      continue;
+    }
+    const key = moduleType + '::' + portName;
+    let dir = dirCache.get(key);
+    if (dir === undefined) {
+      dir = await portDirection(moduleType, portName);
+      dirCache.set(key, dir);
+    }
+    if (dir !== 'input' || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    passes.push({ moduleType, port: portName, offset: start + at });
+  }
+
+  let use: number | null = null;
+  const re = new RegExp('\\b' + escapeRe(signal) + '\\b', 'g');
+  while ((m = re.exec(body)) !== null) {
+    const off = base + m.index;
+    if (inSpans(comments, off)) {
+      continue;
+    }
+    if (wiring.some(([s, e]) => off >= s && off <= e)) {
+      continue;
+    }
+    if (isDeclarationOccurrence(text, off)) {
+      continue;
+    }
+    use = off;
+    break;
+  }
+  return { use, passes };
+}
+
+interface SignalUser {
+  module: string;
+  uri: vscode.Uri;
+  text: string;
+  offset: number;
+}
+
+const MAX_SIGNAL_USER_NODES = 200;
+
+// Breadth-first fan-out below `moduleType`: a module that uses the port is a user,
+// a module that only forwards it to a submodule input is skipped and searched
+// instead.
+async function collectSignalUsers(moduleType: string, port: string): Promise<SignalUser[]> {
+  const users: SignalUser[] = [];
+  const seenUser = new Set<string>();
+  const visited = new Set<string>();
+  const queue: { moduleType: string; port: string }[] = [{ moduleType, port }];
+  while (queue.length && visited.size < MAX_SIGNAL_USER_NODES) {
+    const entry = queue.shift() as { moduleType: string; port: string };
+    const key = entry.moduleType + '::' + entry.port;
+    if (visited.has(key)) {
+      continue;
+    }
+    visited.add(key);
+    const syms = await INDEX.findSymbols(entry.moduleType, ['module', 'interface']);
+    for (const s of syms) {
+      const text = await INDEX.readFile(s.uri);
+      const range = findModuleRange(text, entry.moduleType);
+      if (!range) {
+        continue;
+      }
+      const scan = await scanSignal(text, entry.port, range);
+      if (scan.use !== null) {
+        const userKey = s.uri.toString() + '|' + scan.use;
+        if (!seenUser.has(userKey)) {
+          seenUser.add(userKey);
+          users.push({ module: entry.moduleType, uri: s.uri, text, offset: scan.use });
+        }
+      }
+      for (const pass of scan.passes) {
+        queue.push({ moduleType: pass.moduleType, port: pass.port });
+      }
+    }
+  }
+  return users;
+}
+
+// Hover link on an instance input: jump to the module(s) that ultimately use the
+// signal, skipping the levels that only forward it. Several users -> pick one, at
+// most `systemverilog.maxSignalUsers` are listed.
+async function gotoSignalUsers(arg: unknown): Promise<void> {
+  const a = parsePortNavArg(arg);
+  if (!a || !a.module || !a.port) {
+    return;
+  }
+  const users = await collectSignalUsers(a.module, a.port);
+  if (!users.length) {
+    logger.info(`gotoSignalUsers "${a.module}.${a.port}": no user found`);
+    vscode.window.showInformationMessage(`No module uses input "${a.port}" of ${a.module}`);
+    return;
+  }
+  const max = getConfig().maxSignalUsers;
+  const shown = users.slice(0, max);
+  let chosen = shown[0];
+  if (shown.length > 1) {
+    const items = shown.map((u) => {
+      const line = u.text.slice(0, u.offset).split('\n').length;
+      const snippet = (u.text.split(/\r?\n/)[line - 1] || '').trim();
+      return {
+        label: u.module,
+        description: snippet.length > 80 ? snippet.slice(0, 77) + '...' : snippet,
+        detail: vscode.workspace.asRelativePath(u.uri) + ':' + line,
+      };
+    });
+    const extra = users.length > shown.length ? ` (${shown.length} of ${users.length})` : '';
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: `Modules using input ${a.module}.${a.port}${extra}`,
+      matchOnDescription: true,
+      matchOnDetail: true,
+    });
+    if (!pick) {
+      return;
+    }
+    chosen = shown[items.indexOf(pick)];
+  }
+  logger.info(
+    `gotoSignalUsers "${a.module}.${a.port}" -> ${chosen.module} at ${vscode.workspace.asRelativePath(chosen.uri)}`
+  );
+  await openAt(chosen.uri, chosen.offset);
 }
 
 function currentWord(document: vscode.TextDocument, position: vscode.Position): string {
@@ -983,18 +1514,36 @@ async function gotoDriver(): Promise<void> {
   if (!word) {
     return;
   }
+  // An input port is driven from above: jump to the parent binding and follow
+  // whatever drives the net there (an assignment, a submodule output, or another
+  // input one level up). Several instantiations -> pick one.
+  const moduleName = enclosingModuleName(
+    editor.document.getText(),
+    editor.document.offsetAt(editor.selection.active)
+  );
+  if (moduleName && (await portDirection(moduleName, word)) === 'input') {
+    const jumped = await gotoInputPortDriver(moduleName, word);
+    if (jumped) {
+      return;
+    }
+  }
   const res = findDriver(editor.document.getText(), word);
-  if (res && res.detail !== 'submodule output') {
+  // A local assignment (continuous or procedural) is the real driver: stay here.
+  if (res && res.detail === 'assignment') {
     logger.info(`gotoDriver "${word}" -> ${res.detail} at line ${res.line + 1}`);
     goToLine(editor, res.line, Math.max(0, res.character));
     return;
   }
-  // The signal is connected to a submodule port: jump into that module and follow
-  // the port to its driver (cross-file).
+  // An output port or a net bound to a submodule output: descend through the
+  // levels that only pass the signal along and land where it is really driven.
   const sd = await resolveSubmoduleDriver(editor.document, word);
   if (sd) {
-    const jumped = await gotoPortSignal({ module: sd.moduleType, port: sd.port }, 'driver');
-    if (jumped) {
+    const hop = await resolvePortDriver(sd.moduleType, sd.port);
+    if (hop) {
+      logger.info(
+        `gotoDriver "${word}" -> ${hop.module}.${hop.port} at ${vscode.workspace.asRelativePath(hop.uri)} (${hop.hops} hop(s))`
+      );
+      await openAt(hop.uri, hop.offset);
       return;
     }
   }

@@ -286,7 +286,7 @@ function settingsHtml(
   <div id="validation" class="validation"></div>
 
   <h2>Include Search Directories</h2>
-  <p class="hint">Extra directories searched for include directives, like the +incdir+ paths of your compile command. Absolute or relative to the workspace root. They are used in addition to the including file's directory and any +incdir+ / -I paths in the filelists.</p>
+  <p class="hint">Extra directories searched for include directives, like the +incdir+ paths of your compile command. Absolute or relative to the workspace root, and wildcards are supported: <code>rtl/*/include</code> or <code>**/incdir</code>. They are used in addition to the including file's directory and any +incdir+ / -I paths in the filelists.</p>
   <table id="incdirs"><tbody id="incdirRows"></tbody></table>
   <button id="addInc" class="secondary small">Add directory</button>
   <button id="validateInc" class="secondary small">Validate</button>
@@ -564,12 +564,26 @@ function settingsHtml(
     dirs.forEach((s) => {
       const row = document.createElement('div');
       row.className = 'vrow ' + (s.isDirectory ? 'ok' : (s.exists ? 'warn' : 'err'));
-      const status = s.isDirectory
-        ? 'directory found'
-        : (s.exists ? 'exists but is not a directory' : 'not found');
+      const matched = (s.matches || []).length;
+      const status = s.pattern
+        ? (matched ? matched + (matched === 1 ? ' directory matched' : ' directories matched') : 'no directory matched')
+        : (s.isDirectory ? 'directory found' : (s.exists ? 'exists but is not a directory' : 'not found'));
       row.textContent = s.dir + '  ->  ' + status;
       incValidationBox.appendChild(row);
-      if (!s.isDirectory) {
+      if (s.pattern && matched) {
+        (s.matches || []).slice(0, 5).forEach((m) => {
+          const p = document.createElement('div');
+          p.className = 'sample';
+          p.textContent = m;
+          incValidationBox.appendChild(p);
+        });
+        if (matched > 5) {
+          const more = document.createElement('div');
+          more.className = 'sample';
+          more.textContent = '... and ' + (matched - 5) + ' more';
+          incValidationBox.appendChild(more);
+        }
+      } else if (!s.isDirectory) {
         const p = document.createElement('div');
         p.className = 'sample';
         p.textContent = s.path;

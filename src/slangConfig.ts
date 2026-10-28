@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getConfig, SvConfig } from './config';
+import { expandIncludeDirs } from './indexer';
 import { resolveFileList } from './filelist';
 import * as logger from './logger';
 
@@ -56,7 +57,7 @@ interface SyncResult {
 
 // Build the resolved command file body from the current settings.
 function buildFlagFile(cfg: SvConfig, root: string): { body: string; files: number; incdirs: number } {
-  const globalInc = cfg.includeDirs.map((d) => resolveWorkspacePath(d, root));
+  const globalInc = expandIncludeDirs(cfg.includeDirs, root);
   const entries = cfg.fileLists.filter((l) => l.file && l.base);
   const files = new Set<string>();
   const incdirs = new Set<string>(globalInc);

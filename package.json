@@ -282,7 +282,7 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Extra directories searched for `` `include `` directives, in addition to the including file's directory and any `+incdir+`/`-I` paths in the filelists. Each entry is absolute or relative to the workspace root. Mirrors the `+incdir+` paths of your compile command. Saved per workspace (`.vscode/settings.json`) by **Verilog: Configure Settings**, so each project can use its own directories."
+          "markdownDescription": "Extra directories searched for `` `include `` directives, in addition to the including file's directory and any `+incdir+`/`-I` paths in the filelists. Each entry is absolute or relative to the workspace root, and may contain `*`, `?` or `**` wildcards (e.g. `rtl/*/include` or `**/incdir`), which are expanded to every matching directory. Mirrors the `+incdir+` paths of your compile command. Saved per workspace (`.vscode/settings.json`) by **Verilog: Configure Settings**, so each project can use its own directories."
         },
         "systemverilog.fileLists": {
           "type": "array",
@@ -315,6 +315,13 @@
           "type": "number",
           "default": -1,
           "description": "Max file size (bytes) to display popup info automatically when hovering a valid symbol. -1 disables the limit, 0 disables the feature."
+        },
+        "systemverilog.maxSignalUsers": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 20,
+          "markdownDescription": "Maximum number of modules listed when the hover link **Go to modules using …** finds an input signal used in several places. Values above 20 are treated as 20."
         },
         "systemverilog.portDirectionColors": {
           "type": "object",
@@ -578,7 +585,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "node test/parser.test.js && node test/beautifier.test.js && node test/filelist.test.js && node test/instances.test.js && node test/activation.test.js",
+    "test": "node test/parser.test.js && node test/beautifier.test.js && node test/filelist.test.js && node test/glob.test.js && node test/instances.test.js && node test/activation.test.js",
     "changelog": "node scripts/update-changelog.js",
     "release": "node scripts/release.js"
   },

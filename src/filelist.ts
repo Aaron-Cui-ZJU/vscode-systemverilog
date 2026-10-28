@@ -240,20 +240,108 @@ export function resolveFileList(
   return { files: [...files], incdirs: [...incdirs] };
 }
 
+// Remove `//` and `/* ... */` comments so a commented-out `` `include `` is not
+// followed (and does not show up as unresolvable). String literals are copied
+// verbatim, so a `//` inside them cannot swallow the code that follows it.
+function stripComments(text: string): string {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    const next = i + 1 < text.length ? text[i + 1] : '';
+    if (ch === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') {
+        i++;
+      }
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) {
+        i++;
+      }
+      i += 2;
+      continue;
+    }
+    if (ch === '"') {
+      out += ch;
+      i++;
+      while (i < text.length && text[i] !== '"') {
+        if (text[i] === '\\' && i + 1 < text.length) {
+          out += text[i] + text[i + 1];
+          i += 2;
+        } else {
+          out += text[i];
+          i++;
+        }
+      }
+      if (i < text.length) {
+        out += text[i];
+        i++;
+      }
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
 // Extract the quoted / angle-bracketed targets of `\`include` directives. Macro
-// includes (`` `include `DIR/file ``) cannot be resolved statically and are
-// dropped.
+// includes (`` `include `DIR/file ``) and commented-out directives are dropped.
 export function parseIncludes(text: string): string[] {
   const out: string[] = [];
   const re = /`include\s+["<]([^">\r\n]+)[">]/g;
+  const code = stripComments(text);
   let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
+  while ((m = re.exec(code)) !== null) {
     const name = m[1].trim();
     if (name && !name.includes('`')) {
       out.push(name);
     }
   }
   return out;
+}
+
+// A "link file" is a checked-in stand-in for a source that lives elsewhere (often
+// a generated register model): its whole content is the path of the real file,
+// absolute or relative to the link's own directory. Return the resolved target, or
+// null when the text looks like source code instead of a link.
+export function resolveLinkTarget(absPath: string, text: string): string | null {
+  // Link files are tiny; the length gate also keeps trim() off large sources.
+  if (text.length > 512) {
+    return null;
+  }
+  const trimmed = text.trim();
+  if (!trimmed || /[\r\n]/.test(trimmed)) {
+    return null;
+  }
+  // Any punctuation that appears in Verilog/SystemVerilog is a strong sign that
+  // this is real code rather than a bare path.
+  if (/[;{}()"'`]|\/\/|\/\*/.test(trimmed)) {
+    return null;
+  }
+  const target = path.resolve(path.dirname(absPath), trimmed);
+  return target === absPath ? null : target;
+}
+
+// Follow link files (including chains of them) to the file whose text should be
+// used. The caller's `read` doubles as the existence check, so a link whose target
+// is missing is left as-is.
+export function resolveSourcePath(absPath: string, read: ReadText): string {
+  let current = absPath;
+  for (let depth = 0; depth < 8; depth++) {
+    const text = read(current);
+    if (text === null) {
+      return current;
+    }
+    const target = resolveLinkTarget(current, text);
+    if (!target || read(target) === null) {
+      return current;
+    }
+    current = target;
+  }
+  return current;
 }
 
 function resolveInclude(
@@ -264,8 +352,9 @@ function resolveInclude(
 ): string | null {
   const candidates = [path.join(fromDir, name), ...searchDirs.map((d) => path.join(d, name))];
   for (const candidate of candidates) {
-    if (read(candidate) !== null) {
-      return path.resolve(candidate);
+    const abs = path.resolve(candidate);
+    if (read(abs) !== null) {
+      return resolveSourcePath(abs, read);
     }
   }
   return null;
@@ -292,7 +381,7 @@ export function followIncludes(
   const out: string[] = [];
   const queue = startFiles.map((f) => path.resolve(f));
   while (queue.length) {
-    const file = queue.shift() as string;
+    const file = resolveSourcePath(queue.shift() as string, read);
     if (seen.has(file)) {
       continue;
     }

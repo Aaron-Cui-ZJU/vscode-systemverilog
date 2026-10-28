@@ -10,6 +10,7 @@ export interface SvConfig {
   svhExt: string[];
   tooltip: boolean;
   hoverMaxSize: number;
+  maxSignalUsers: number;
   portDirectionColors: Record<string, string>;
   oneBindPerLine: boolean;
   oneDeclPerLine: boolean;
@@ -126,6 +127,7 @@ function readConfig(): SvConfig {
     svhExt: arr(c.get('svhExt')),
     tooltip: c.get('tooltip', true),
     hoverMaxSize: c.get('hoverMaxSize', -1),
+    maxSignalUsers: Math.min(20, Math.max(1, Number(c.get('maxSignalUsers', 5)) || 5)),
     portDirectionColors: mergePortDirectionColors(c.get('portDirectionColors')),
     oneBindPerLine: c.get('oneBindPerLine', true),
     oneDeclPerLine: c.get('oneDeclPerLine', false),

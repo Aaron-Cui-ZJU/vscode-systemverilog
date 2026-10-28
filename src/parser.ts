@@ -59,7 +59,7 @@ export interface ClassInfo {
 }
 
 // regular expression for signal/variable declaration:
-export const reBw = '[\\w\\*\\(\\)\\/><\\:\\-\\+`\\$\\s]+';
+export const reBw = "[\\w\\*\\(\\)\\/><\\:\\-\\+'`\\$\\s]+";
 export const reVar =
   '^\\s*(\\w+\\s+)?(\\w+\\s+)?([A-Za-z_][\\w\\:\\.]*\\s+)(\\[' + reBw + '\\])?\\s*([A-Za-z_][\\w=,\\s]*,\\s*)?\\b';
 export const reDecl =

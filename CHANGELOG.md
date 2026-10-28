@@ -1,5 +1,17 @@
 # Change Log
 
+## 1.3.0 (2026-10-28)
+
+- Support `*`, `?` and `**` wildcards in `systemverilog.includeDirs`
+- Ignore commented-out `` `include `` directives when following includes
+- Follow link files (a file whose content is a path) to the referenced source
+- Go to Driver follows pass-through instance connections to the module that drives an output
+- Go to Driver on an input port walks up to the parent binding, listing up to `maxSignalUsers` instantiations
+- Hover link on an instance input jumps to the modules that ultimately use the signal, skipping forwarding levels
+- Add `systemverilog.maxSignalUsers` (default 5, max 20) for the signal-user list
+- Fix port parsing for ranges containing sized literals (e.g. `1'b1`), so hover and jump-to-module work on those ports
+
+
 ## 1.2.7 (2026-10-28)
 
 - Save `fileLists` and `includeDirs` per workspace so each project keeps its own filelists
