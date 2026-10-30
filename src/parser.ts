@@ -102,8 +102,22 @@ export function cleanComment(text: string): string {
 // honour backslash escapes (a trailing lone backslash is masked too).
 const reMaskComments = /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)|"(?:\\[\s\S]|[^\\"])*(?:"|\\$|$)/g;
 
+// Same masking as `maskComments`, plus the `[start, end)` region of every masked
+// match so callers can answer "is this offset inside a comment or string?"
+// without comparing characters (a space inside a comment is indistinguishable
+// from a space of real code). Both the length and the line breaks are preserved,
+// so offsets into `masked` are offsets into `text`.
+export function maskCommentRanges(text: string): { masked: string; ranges: [number, number][] } {
+  const ranges: [number, number][] = [];
+  const masked = text.replace(reMaskComments, (match: string, offset: number) => {
+    ranges.push([offset, offset + match.length]);
+    return match.replace(/[^\r\n]/g, ' ');
+  });
+  return { masked, ranges };
+}
+
 export function maskComments(text: string): string {
-  return text.replace(reMaskComments, (match) => match.replace(/[^\r\n]/g, ' '));
+  return maskCommentRanges(text).masked;
 }
 
 // Name of the innermost class whose body contains `offset`, or null. Forward
