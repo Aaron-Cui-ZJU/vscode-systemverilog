@@ -1,5 +1,10 @@
 # Change Log
 
+## Unreleased
+
+- Complete declarations visible in the current scope (ports, parameters, signals, variables, instance names, typedefs, enum members, function/task names, function-local variables and members of `import pkg::*` packages), ranked above the snippets, with nothing offered inside comments or string literals
+
+
 ## 1.3.0 (2026-10-28)
 
 - Support `*`, `?` and `**` wildcards in `systemverilog.includeDirs`

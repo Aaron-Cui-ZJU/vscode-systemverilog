@@ -29,6 +29,11 @@ SystemVerilog / Verilog support for VS Code, ported from the Sublime Text
   `::` completion; missing-port completion inside module/interface instantiations
   (type `.` in the port list to list ports not yet bound); enum/vector `case`
   completion; system tasks, directives, UVM functions and keyword snippets.
+  Declarations visible in the current scope also complete — module, interface and
+  package ports, parameters, signals and variables, instance names, typedefs, enum
+  members, function and task names, function-local variables, and members of
+  packages pulled in with `import pkg::*`; these symbol rows are ranked above the
+  snippets, and no declarations are offered inside comments or string literals.
 - **Editing**: alignment, reindent, module instantiation with parameter prompts
   and auto-connect, `.*` expansion, FSM template generation, block move/select.
 - **Linting**: find unused and undeclared signals.
