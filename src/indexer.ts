@@ -521,6 +521,21 @@ export class WorkspaceIndex {
     void this.ensureIndex().catch((e) => logger.warn(`index build failed: ${e}`));
   }
 
+  // Non-blocking probe for latency-sensitive callers (completion on the first
+  // keystroke): it never touches the build.
+  isBuilt(): boolean {
+    return this.built;
+  }
+
+  // Package members for a wildcard import, resolved only once the index is
+  // ready. Returns `null` while it builds and never calls `ensureIndex()`.
+  async peekPackage(name: string): Promise<TypeInfo[] | null> {
+    if (!this.built) {
+      return null;
+    }
+    return this.lookupPackage(name);
+  }
+
   // Drop everything and rebuild (e.g. workspace folders changed).
   rebuild(): Promise<void> {
     this.records.clear();

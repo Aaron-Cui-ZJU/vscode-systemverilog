@@ -24,7 +24,7 @@ import {
   reDecl,
 } from './parser';
 import { buildBindingSuggestions, findPortBindingContext } from './portCompletion';
-import { ScopeSymbol, symbolsAt } from './scopeSymbols';
+import { ScopeSymbol, ScopeTable, importedPackages, isCodePosition, packageImportSource, symbolsAt } from './scopeSymbols';
 import { typeInfo } from './lookup';
 import * as logger from './logger';
 
@@ -274,9 +274,8 @@ const symbolKinds: Record<ScopeSymbol['kind'], vscode.CompletionItemKind> = {
 // snippet, no parentheses) ranked by `sortText` so they precede the fixed
 // snippet list, and they are dropped by the scope engine itself when the
 // cursor sits inside a comment or string literal.
-function symbolItems(document: vscode.TextDocument, position: vscode.Position): CompletionItemPlus[] {
-  const table = documentScopeTable(document);
-  const list = symbolsAt(table, document.offsetAt(position));
+function symbolItems(table: ScopeTable, offset: number): CompletionItemPlus[] {
+  const list = symbolsAt(table, offset);
   const seen = new Set<string>();
   const out: CompletionItemPlus[] = [];
   for (const s of list) {
@@ -292,6 +291,57 @@ function symbolItems(document: vscode.TextDocument, position: vscode.Position): 
       filterText: s.name,
       sortText: '0' + s.name,
     });
+  }
+  return out;
+}
+
+const packageKinds: Partial<Record<TypeInfo['tag'], vscode.CompletionItemKind>> = {
+  decl: vscode.CompletionItemKind.Constant,
+  typedef: vscode.CompletionItemKind.Class,
+  struct: vscode.CompletionItemKind.Class,
+  union: vscode.CompletionItemKind.Class,
+};
+
+function packageRow(name: string, detail: string, kind: vscode.CompletionItemKind): CompletionItemPlus {
+  return { label: name, detail, kind, insertText: name, filterText: name, sortText: '1' + name };
+}
+
+// Members of the packages wildcard-imported into the cursor's scope. Ranked
+// after the local symbol rows (`'0'`) and still before the snippet labels, and
+// only asked for once the workspace index reports itself built.
+async function packageItems(table: ScopeTable, offset: number): Promise<CompletionItemPlus[]> {
+  if (!isCodePosition(table, offset)) {
+    return [];
+  }
+  const packages = importedPackages(packageImportSource(table, offset));
+  const out: CompletionItemPlus[] = [];
+  for (const pkg of packages) {
+    let members: TypeInfo[] | null;
+    try {
+      members = await INDEX.peekPackage(pkg);
+    } catch (e) {
+      logger.debug(`completion: package "${pkg}" lookup failed: ${e}`);
+      continue;
+    }
+    if (!members) {
+      logger.debug(`completion: package "${pkg}" not available yet (index not built)`);
+      continue;
+    }
+    for (const member of members) {
+      const detail = member.decl ?? member.name;
+      if (member.tag === 'enum') {
+        out.push(packageRow(member.name, detail, vscode.CompletionItemKind.Class));
+        for (const value of member.decl ? getEnumValues(member.decl) : []) {
+          out.push(packageRow(value, detail, vscode.CompletionItemKind.EnumMember));
+        }
+        continue;
+      }
+      const kind = packageKinds[member.tag];
+      if (!kind) {
+        continue;
+      }
+      out.push(packageRow(member.name, detail, kind));
+    }
   }
   return out;
 }
@@ -472,9 +522,16 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
         !prefix.startsWith('`');
       let symbolCount = 0;
       if (allowSymbols) {
-        const symbols = symbolItems(document, position);
-        symbolCount = symbols.length;
+        const table = documentScopeTable(document);
+        const offset = document.offsetAt(position);
+        const symbols = symbolItems(table, offset);
         items = items.concat(symbols);
+        symbolCount = symbols.length;
+        if (INDEX.isBuilt()) {
+          const members = await packageItems(table, offset);
+          items = items.concat(members);
+          symbolCount += members.length;
+        }
       }
       if (!items.length) {
         logger.debug(
