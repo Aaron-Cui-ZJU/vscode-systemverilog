@@ -65,9 +65,71 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// `module automatic m;` / `module static m;` (LRM 23.2.1): the lifetime
+// qualifier sits between the keyword and the identifier, so skip it when
+// reading the name.
 function readName(masked: string, from: number): string {
-  const m = masked.slice(from).match(/^\s*([A-Za-z_]\w*)/);
+  const m = masked.slice(from).match(/^\s*(?:(?:automatic|static)\s+)*([A-Za-z_]\w*)/);
   return m ? m[1] : '';
+}
+
+// End of a module/interface header: the first `;` outside every bracket.
+function headerEnd(masked: string, from: number): number {
+  let paren = 0;
+  let bracket = 0;
+  let brace = 0;
+  for (let i = from; i < masked.length; i++) {
+    const c = masked[i];
+    if (c === '(') {
+      paren++;
+    } else if (c === ')') {
+      if (paren > 0) {
+        paren--;
+      }
+    } else if (c === '[') {
+      bracket++;
+    } else if (c === ']') {
+      if (bracket > 0) {
+        bracket--;
+      }
+    } else if (c === '{') {
+      brace++;
+    } else if (c === '}') {
+      if (brace > 0) {
+        brace--;
+      }
+    } else if (c === ';' && paren === 0 && bracket === 0 && brace === 0) {
+      return i;
+    }
+  }
+  return masked.length;
+}
+
+// Paren depth at `index`, measured from the start of a header.
+function parenDepth(masked: string, from: number, to: number): number {
+  let depth = 0;
+  for (let i = from; i < to; i++) {
+    const c = masked[i];
+    if (c === '(') {
+      depth++;
+    } else if (c === ')' && depth > 0) {
+      depth--;
+    }
+  }
+  return depth;
+}
+
+// `module m (interface i, input logic c);` and `module m (interface.mp i);`
+// declare generic interface ports (LRM 25.3.3, 25.5.3). The `interface` token
+// is a type there, not a block opener: treating it as a scope produced a
+// phantom span from the port to EOF that shadowed the whole module.
+function inHeaderPortList(masked: string, index: number, headers: Region[]): boolean {
+  for (const header of headers) {
+    if (index > header.start && index < header.end && parenDepth(masked, header.start, index) > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
@@ -75,6 +137,7 @@ function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
   const classStack: number[] = [];
   const spans: ScopeSpan[] = [];
   const classes: Region[] = [];
+  const headers: Region[] = [];
   const re = new RegExp(reOpen.source, 'g');
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked)) !== null) {
@@ -118,8 +181,14 @@ function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
       if (/^\s*class\b/.test(masked.slice(tokenEnd))) {
         continue;
       }
+      if (inHeaderPortList(masked, m.index, headers)) {
+        continue;
+      }
     }
     stack.push({ kind: kw as BlockKind, name: readName(masked, tokenEnd), start: m.index });
+    if (kw === 'module' || kw === 'interface') {
+      headers.push({ start: m.index, end: headerEnd(masked, tokenEnd) });
+    }
   }
   for (const open of stack) {
     spans.push({ kind: open.kind, name: open.name, start: open.start, end: masked.length, symbols: [] });
@@ -161,11 +230,15 @@ function removeRegions(text: string, regions: Region[]): string {
   return parts.join('\n');
 }
 
+// Names that are not plain identifiers (e.g. the `0` that the declaration
+// scanner extracts from `return 0;`) must never reach the completion list.
+const reIdentifier = /^[A-Za-z_]\w*$/;
+
 function dedupeSymbols(list: ScopeSymbol[]): ScopeSymbol[] {
   const seen = new Set<string>();
   const out: ScopeSymbol[] = [];
   for (const s of list) {
-    if (!s.name || seen.has(s.name)) {
+    if (!s.name || !reIdentifier.test(s.name) || seen.has(s.name)) {
       continue;
     }
     seen.add(s.name);
@@ -206,6 +279,52 @@ function pushFunctions(out: ScopeSymbol[], list: FuncInfo[]): void {
   }
 }
 
+// The parser's `getAllFunction` tolerates at most one optional qualifier plus
+// one return-type word (or one range) before the name, so a very common header
+// such as `function automatic logic [7:0] incr(...)` is never registered. Scan
+// the masked slice for the declarations the parser misses; the caller merges
+// these names in *after* the parser's results.
+const reFunctionHeader =
+  /^[ \t]*(?:(?:virtual|static|automatic|local|protected|extern|pure)\s+)*(function|task)\s+(?:[^;()]*?)\b([A-Za-z_]\w*)\s*\(/gm;
+
+const nonFunctionNames = new Set(['function', 'task', 'new', 'endfunction', 'endtask']);
+
+interface FunctionName {
+  name: string;
+  kind: 'function' | 'task';
+  detail: string;
+}
+
+function scanFunctionNames(slice: string): FunctionName[] {
+  const out: FunctionName[] = [];
+  const seen = new Set<string>();
+  const re = new RegExp(reFunctionHeader.source, 'gm');
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(slice)) !== null) {
+    const name = m[2];
+    if (!reIdentifier.test(name) || nonFunctionNames.has(name) || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    const lineEnd = slice.indexOf('\n', m.index);
+    const line = slice.slice(m.index, lineEnd < 0 ? slice.length : lineEnd);
+    out.push({ name, kind: m[1] === 'task' ? 'task' : 'function', detail: line.trim() });
+  }
+  return out;
+}
+
+// Names from `getAllFunction` win: only append what the parser did not produce.
+function pushFunctionNames(out: ScopeSymbol[], slice: string): void {
+  const seen = new Set(out.map((s) => s.name));
+  for (const fn of scanFunctionNames(slice)) {
+    if (seen.has(fn.name)) {
+      continue;
+    }
+    seen.add(fn.name);
+    out.push({ name: fn.name, detail: fn.detail || fn.name, kind: fn.kind });
+  }
+}
+
 // A span cut out of the masked text has no end keyword when the file is still
 // being typed; the parser needs one, so append it (masked text keeps the span
 // identifiable, and the appended keyword only affects the tail of the slice).
@@ -217,9 +336,18 @@ function withTerminator(slice: string, kind: BlockKind): string {
   return new RegExp('\\b' + end + '\\b').test(slice) ? slice : slice + '\n' + end;
 }
 
+// The parser's header pattern expects the keyword directly followed by the
+// name, so drop a `static`/`automatic` lifetime before handing it the slice.
+function stripLifetime(source: string, kind: BlockKind): string {
+  if (kind === 'package') {
+    return source.replace(/^(\s*package)\s+(?:(?:automatic|static)\s+)+/, '$1 ');
+  }
+  return source.replace(/^(\s*(?:module|interface))\s+(?:(?:automatic|static)\s+)+/, '$1 ');
+}
+
 function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
   const out: ScopeSymbol[] = [];
-  const source = withTerminator(slice, span.kind);
+  const source = stripLifetime(withTerminator(slice, span.kind), span.kind);
   if (span.kind === 'package') {
     // parsePackage returns FuncInfo and TypeInfo interleaved; every TypeInfo
     // carries a `tag`, which FuncInfo does not.
@@ -231,6 +359,7 @@ function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
         out.push(funcSymbol(member as FuncInfo));
       }
     }
+    pushFunctionNames(out, source);
     return out;
   }
   const info = parseModule(source, escapeRe(span.name));
@@ -239,7 +368,11 @@ function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
       out.push({ name: p.name, detail: p.decl ?? p.type ?? p.name, kind: 'port' });
     }
     for (const p of info.param as ParamInfo[]) {
-      out.push({ name: p.name, detail: p.decl || p.name, kind: 'param' });
+      // `ParamInfo.decl` only holds the type token, so rebuild the declaration
+      // text (`int W = 8`) instead of showing a bare `int`.
+      const declaration = [p.decl, p.name].filter(Boolean).join(' ');
+      const detail = p.value ? `${declaration} = ${p.value}` : declaration || p.name;
+      out.push({ name: p.name, detail, kind: 'param' });
     }
     for (const i of info.inst) {
       out.push({ name: i.name, detail: i.decl ?? i.type ?? i.name, kind: 'instance' });
@@ -247,6 +380,7 @@ function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
     pushTypes(out, info.signal);
     pushFunctions(out, getAllFunction(source, '\\w+'));
   }
+  pushFunctionNames(out, source);
   return out;
 }
 
@@ -263,6 +397,7 @@ export function buildScopeTable(text: string): ScopeTable {
   const unit: ScopeSymbol[] = [];
   pushTypes(unit, getAllTypeInfo(unitSource, true));
   pushFunctions(unit, getAllFunction(unitSource, '\\w+'));
+  pushFunctionNames(unit, unitSource);
   return { text, masked, ranges, spans, unitText, unit: dedupeSymbols(unit) };
 }
 
