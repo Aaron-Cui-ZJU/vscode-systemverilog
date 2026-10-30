@@ -7,9 +7,9 @@
 // directives, port bindings, `end` closing keywords, `disableAutocomplete`) must
 // keep working while document declarations are added.
 //
-// The single assertion marked BASELINE below states that document declarations
-// are NOT offered yet. That assertion is rewritten in place (not deleted) by the
-// todo that merges scope symbols into the provider.
+// The single assertion marked BASELINE below used to state that document
+// declarations were NOT offered. That assertion is rewritten in place (not
+// deleted) now that scope symbols are merged into the provider.
 
 const assert = require('assert');
 const stub = require('./helpers/vscodeStub');
@@ -136,17 +136,110 @@ async function run() {
   checkTrue("'end' yields the endmodule snippet", hasLabel(endItems, 'endmodule'));
 
   // ------------------------------------------------------------- BASELINE ----
-  // BASELINE: the provider does not offer document declarations yet. `data` only
-  // matches the keyword snippets, so `data_valid` must NOT appear. When
-  // `src/completion.ts` starts merging scope symbols, rewrite this one
-  // assertion to `checkTrue(...)` (expected `true`) - nothing else changes.
+  // BASELINE: document declarations are merged into the candidate list now.
+  // The row still has to be a plain name carrying the declaration text as
+  // detail, and it ranks ahead of the fixed snippets via `sortText`.
   const declText = ['module top;', '  logic [7:0] data_valid;', '  data', 'endmodule'].join('\n');
   const docDecl = stub.makeDocument(declText, { fileName: '/tmp/stub_decl.sv' });
   const declItems = await provider.provideCompletionItems(docDecl, atLine(docDecl, 2));
+  const dataValid = (declItems || []).find((i) => i.label === 'data_valid');
+  checkTrue('BASELINE: document declaration data_valid is offered', !!dataValid);
+  checkTrue(
+    'BASELINE: data_valid ranks with the 0-prefixed symbol rows',
+    !!dataValid && typeof dataValid.sortText === 'string' && dataValid.sortText.startsWith('0')
+  );
+  checkTrue(
+    'BASELINE: data_valid detail carries the declaration text',
+    !!dataValid && typeof dataValid.detail === 'string' && dataValid.detail.includes('logic [7:0]')
+  );
+
+  // ------------------------------------------------------------ symbol merge
+  // (a) `a` used to short-circuit to the always* snippets; symbols must now
+  // coexist with that branch instead of being swallowed by it.
+  const symAText = ['module top;', '  logic addr;', '  a', 'endmodule'].join('\n');
+  const docSymA = stub.makeDocument(symAText, { fileName: '/tmp/stub_sym_a.sv' });
+  const symAItems = await provider.provideCompletionItems(docSymA, atLine(docSymA, 2));
+  checkTrue("'a' still yields an always* snippet", hasLabel(symAItems, 'always_ff') || hasLabel(symAItems, 'always'));
+  checkTrue("'a' also yields the addr declaration", hasLabel(symAItems, 'addr'));
+
+  // (b) `m` used to short-circuit to the modport template.
+  const symMText = ['module top;', '  logic m_valid;', '  m', 'endmodule'].join('\n');
+  const docSymM = stub.makeDocument(symMText, { fileName: '/tmp/stub_sym_m.sv' });
+  const symMItems = await provider.provideCompletionItems(docSymM, atLine(docSymM, 2));
+  checkTrue("'m' still yields the modport template", hasLabel(symMItems, 'modport'));
+  checkTrue("'m' also yields the m_valid declaration", hasLabel(symMItems, 'm_valid'));
+
+  // (c) `end` used to short-circuit to endItems. The typed `end` closes the
+  // `begin` block, so the enclosing module provides the `endmodule` snippet.
+  const symEndText = ['module top;', '  logic end_state;', '  initial begin', '  end', 'endmodule'].join('\n');
+  const docSymEnd = stub.makeDocument(symEndText, { fileName: '/tmp/stub_sym_end.sv' });
+  const symEndItems = await provider.provideCompletionItems(docSymEnd, atLine(docSymEnd, 3));
+  checkTrue("'end' still yields the closing keyword", hasLabel(symEndItems, 'endmodule'));
+  checkTrue("'end' also yields the end_state declaration", hasLabel(symEndItems, 'end_state'));
+
+  // (d) Empty prefix inside a module body used to return undefined.
+  const symEmptyText = ['module top;', '  logic empty_scope_name;', '  ', 'endmodule'].join('\n');
+  const docSymEmpty = stub.makeDocument(symEmptyText, { fileName: '/tmp/stub_sym_empty.sv' });
+  const symEmptyItems = await provider.provideCompletionItems(docSymEmpty, atLine(docSymEmpty, 2));
+  checkTrue(
+    'empty prefix inside a module returns the scope declarations',
+    Array.isArray(symEmptyItems) && symEmptyItems.length > 0 && hasLabel(symEmptyItems, 'empty_scope_name')
+  );
+
+  // (e) Comments and string literals never produce declaration rows.
+  const symCommentText = ['module top;', '  logic [7:0] data_valid;', '  // data_', 'endmodule'].join('\n');
+  const docSymComment = stub.makeDocument(symCommentText, { fileName: '/tmp/stub_sym_comment.sv' });
+  const symCommentItems = await provider.provideCompletionItems(docSymComment, atLine(docSymComment, 2));
+  checkTrue('a comment position offers no declaration rows', !hasLabel(symCommentItems, 'data_valid'));
+
+  const symStringText = ['module top;', '  logic [7:0] data_valid;', '  string s = "data_";', 'endmodule'].join('\n');
+  const docSymString = stub.makeDocument(symStringText, { fileName: '/tmp/stub_sym_string.sv' });
+  const stringLine = docSymString.lineAt(2).text;
+  const symStringItems = await provider.provideCompletionItems(
+    docSymString,
+    new (vscode().Position)(2, stringLine.indexOf('data_') + 'data_'.length)
+  );
+  checkTrue('a string literal position offers no declaration rows', !hasLabel(symStringItems, 'data_valid'));
+
+  // (f) A `.` inside an instantiation port list stays member completion only.
+  const symDotText = [
+    'module child (',
+    '  input logic a,',
+    '  input logic b',
+    ');',
+    'endmodule',
+    'module top;',
+    '  logic data_valid;',
+    '  child u_c (',
+    '    .',
+    '  );',
+    'endmodule',
+  ].join('\n');
+  const docSymDot = stub.makeDocument(symDotText, { fileName: '/tmp/stub_sym_dot.sv' });
+  const symDotItems = await provider.provideCompletionItems(docSymDot, atLine(docSymDot, 8));
+  checkTrue("the '.' port list keeps the child's ports", hasLabel(symDotItems, 'a') && hasLabel(symDotItems, 'b'));
+  checkTrue("the '.' port list adds no scope declarations", !hasLabel(symDotItems, 'data_valid'));
+
+  // (g) The case-fill position returns only the case value item, no symbol rows.
+  const symCaseText = [
+    'module top;',
+    '  typedef enum logic [1:0] {IDLE, RUN} state_t;',
+    '  state_t st;',
+    '  case (st)',
+    'endmodule',
+  ].join('\n');
+  const docSymCase = stub.makeDocument(symCaseText, { fileName: '/tmp/stub_sym_case.sv' });
+  const symCaseItems = await provider.provideCompletionItems(docSymCase, atLine(docSymCase, 3));
+  check('case fill returns exactly the case value item', labels(symCaseItems), ['case values']);
+
+  // (h) Same-named declarations appear once.
+  const symDupText = ['module top;', '  logic dup_name;', '  logic dup_name;', '  d', 'endmodule'].join('\n');
+  const docSymDup = stub.makeDocument(symDupText, { fileName: '/tmp/stub_sym_dup.sv' });
+  const symDupItems = await provider.provideCompletionItems(docSymDup, atLine(docSymDup, 3));
   check(
-    'BASELINE: document declaration data_valid is not offered yet',
-    hasLabel(declItems, 'data_valid'),
-    false
+    'same-named declarations are deduped',
+    labels(symDupItems).filter((l) => l === 'dup_name').length,
+    1
   );
 
   // ----------------------------------------------------------- stale state ---
@@ -201,6 +294,29 @@ async function run() {
   docVersion.setText('module x; logic b; endmodule');
   docVersion.version += 1;
   check('documentText() rebuilds when the version changes', documentCache.documentText(docVersion), 'module x; logic b; endmodule');
+
+  // ------------------------------------------ documentScopeTable cache --------
+  const scopeSymbols = require('../out/scopeSymbols.js');
+  const docScope = stub.makeDocument(
+    ['module scope_cache;', '  logic old_only;', 'endmodule'].join('\n'),
+    { fileName: '/tmp/stub_scope_cache.sv' }
+  );
+  const oldTable = documentCache.documentScopeTable(docScope);
+  checkTrue(
+    'documentScopeTable() returns the same object for one version',
+    oldTable === documentCache.documentScopeTable(docScope)
+  );
+
+  docScope.setText(['module scope_cache;', '  logic new_only;', 'endmodule'].join('\n'));
+  docScope.version += 1;
+  const newTable = documentCache.documentScopeTable(docScope);
+  checkTrue('documentScopeTable() rebuilds a different object after a version bump', newTable !== oldTable);
+
+  const newNames = scopeSymbols.symbolsAt(newTable, newTable.text.length).map((s) => s.name);
+  checkTrue('the rebuilt table exposes a declaration from the new text', newNames.includes('new_only') && !newNames.includes('old_only'));
+
+  const oldNames = scopeSymbols.symbolsAt(oldTable, oldTable.text.length).map((s) => s.name);
+  checkTrue('the old table still holds the declaration removed from the document', oldNames.includes('old_only'));
 
   console.log(`\nPASS=${pass} FAIL=${fail}`);
   process.exit(fail ? 1 : 0);

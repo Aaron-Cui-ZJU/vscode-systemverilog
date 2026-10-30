@@ -10,7 +10,7 @@ import {
 } from './config';
 import { INDEX } from './indexer';
 import { serverProvidesCompletion } from './languageServer';
-import { cleanDocument, documentAllTypeInfo, documentText } from './documentCache';
+import { cleanDocument, documentAllTypeInfo, documentScopeTable, documentText } from './documentCache';
 import {
   FuncInfo,
   ModuleInfo,
@@ -24,6 +24,7 @@ import {
   reDecl,
 } from './parser';
 import { buildBindingSuggestions, findPortBindingContext } from './portCompletion';
+import { ScopeSymbol, symbolsAt } from './scopeSymbols';
 import { typeInfo } from './lookup';
 import * as logger from './logger';
 
@@ -251,7 +252,48 @@ interface CompletionItemPlus {
   label: string;
   detail: string;
   snippet?: string;
+  insertText?: string;
   kind?: vscode.CompletionItemKind;
+  sortText?: string;
+  filterText?: string;
+}
+
+const symbolKinds: Record<ScopeSymbol['kind'], vscode.CompletionItemKind> = {
+  port: vscode.CompletionItemKind.Field,
+  signal: vscode.CompletionItemKind.Field,
+  instance: vscode.CompletionItemKind.Field,
+  param: vscode.CompletionItemKind.Constant,
+  local: vscode.CompletionItemKind.Variable,
+  typedef: vscode.CompletionItemKind.Class,
+  enumValue: vscode.CompletionItemKind.EnumMember,
+  function: vscode.CompletionItemKind.Function,
+  task: vscode.CompletionItemKind.Method,
+};
+
+// Document declarations visible at the cursor. Rows are plain names (no
+// snippet, no parentheses) ranked by `sortText` so they precede the fixed
+// snippet list, and they are dropped by the scope engine itself when the
+// cursor sits inside a comment or string literal.
+function symbolItems(document: vscode.TextDocument, position: vscode.Position): CompletionItemPlus[] {
+  const table = documentScopeTable(document);
+  const list = symbolsAt(table, document.offsetAt(position));
+  const seen = new Set<string>();
+  const out: CompletionItemPlus[] = [];
+  for (const s of list) {
+    if (seen.has(s.name)) {
+      continue;
+    }
+    seen.add(s.name);
+    out.push({
+      label: s.name,
+      detail: s.detail,
+      kind: symbolKinds[s.kind],
+      insertText: s.name,
+      filterText: s.name,
+      sortText: '0' + s.name,
+    });
+  }
+  return out;
 }
 
 function alwaysItems(document: vscode.TextDocument): CompletionItemPlus[] {
@@ -326,6 +368,7 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
       const beforePrefix = before.slice(0, before.length - prefix.length);
       let items: CompletionItemPlus[] = [];
       let prevSym = '';
+      let caseFilled = false;
       if (beforePrefix.endsWith('::')) {
         prevSym = '::';
       } else if (/[.`:$]/.test(beforePrefix.slice(-1))) {
@@ -396,6 +439,7 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
       } else if (!prefix && /\)\s*$/.test(beforePrefix)) {
         const caseM = before.match(/^\s*case\s*\((.+?)\)\s*$/);
         if (caseM) {
+          caseFilled = true;
           const it = caseTemplate(document, caseM[1]);
           if (it) {
             items.push(it);
@@ -418,17 +462,43 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
       } else {
         items = keywordItems();
       }
+      const allowSymbols =
+        !caseFilled &&
+        prevSym !== '.' &&
+        prevSym !== '::' &&
+        prevSym !== '$' &&
+        prevSym !== '`' &&
+        !prefix.startsWith('$') &&
+        !prefix.startsWith('`');
+      let symbolCount = 0;
+      if (allowSymbols) {
+        const symbols = symbolItems(document, position);
+        symbolCount = symbols.length;
+        items = items.concat(symbols);
+      }
       if (!items.length) {
-        logger.debug(`completion: prefix="${prefix}" prevSym="${prevSym}" -> no item`);
+        logger.debug(
+          `completion: prefix="${prefix}" prevSym="${prevSym}" -> no item (symbols=${symbolCount})`
+        );
         return undefined;
       }
-      logger.debug(`completion: prefix="${prefix}" prevSym="${prevSym}" -> ${items.length} item(s)`);
+      logger.debug(
+        `completion: prefix="${prefix}" prevSym="${prevSym}" -> ${items.length} item(s), ${symbolCount} symbol row(s)`
+      );
       const range = new vscode.Range(position.translate(0, -prefix.length), position);
       return items.map((it) => {
         const ci = new vscode.CompletionItem(it.label, it.kind ?? vscode.CompletionItemKind.Snippet);
         ci.detail = it.detail;
-        if (it.snippet !== undefined) {
+        if (it.insertText !== undefined) {
+          ci.insertText = it.insertText;
+        } else if (it.snippet !== undefined) {
           ci.insertText = new vscode.SnippetString(it.snippet);
+        }
+        if (it.sortText !== undefined) {
+          ci.sortText = it.sortText;
+        }
+        if (it.filterText !== undefined) {
+          ci.filterText = it.filterText;
         }
         ci.range = range;
         return ci;
