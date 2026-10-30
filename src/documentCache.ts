@@ -6,6 +6,8 @@ import {
   getAllTypeInfo,
   parseModule,
 } from './parser';
+import type { ScopeTable } from './scopeSymbols';
+import { buildScopeTable } from './scopeSymbols';
 
 // Per-document memoization keyed by `TextDocument.version`. Editing the document
 // bumps the version, which drops the entry; repeated hover/completion requests on
@@ -15,6 +17,7 @@ interface DocEntry {
   version: number;
   text: string;
   cleaned?: string;
+  scopes?: ScopeTable;
   types: Map<string, TypeInfo[]>;
   modules: Map<string, ModuleInfo | null>;
 }
@@ -72,4 +75,15 @@ export function documentModuleInfo(
     e.modules.set(key, parseModule(cleanedOf(e), '\\w+', instOnly, noInst));
   }
   return e.modules.get(key)!;
+}
+
+// The scope table is built from the raw document text (it masks its own
+// comments/strings), so it gets its own slot on the version-scoped entry:
+// repeat calls within one `version` hand back the very same object.
+export function documentScopeTable(document: vscode.TextDocument): ScopeTable {
+  const e = entryFor(document);
+  if (e.scopes === undefined) {
+    e.scopes = buildScopeTable(e.text);
+  }
+  return e.scopes;
 }
