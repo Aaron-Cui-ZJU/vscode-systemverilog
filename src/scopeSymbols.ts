@@ -363,35 +363,15 @@ function stripLifetime(source: string, kind: BlockKind): string {
   return source.replace(/^(\s*(?:module|interface))\s+(?:(?:automatic|static)\s+)+/, '$1 ');
 }
 
-// The header-level `package_import_declaration` run of `module m import p::*;`
-// (LRM 23.2.1), after the keyword, an optional lifetime and the identifier.
-const reHeaderImportRun =
-  /^(\s*(?:module|interface)\s+(?:(?:automatic|static)\s+)*[A-Za-z_]\w*)((?:\s+import\s+[^;]*;)+)/;
-
-// `parseModule`'s header pattern consumes the import's own `;` through a lazy
-// `(?<import>...)` group and still demands a terminator. With a parameter or
-// port list the later `;` satisfies it; a header that carries only an import
-// (both lists are optional) matches nothing, so the module used to expose no
-// symbols at all — the most common UVM testbench opening line. Retry inputs are
-// built only after the normal parse failed, so every currently-parsing header
-// keeps its result.
-function blankHeaderImports(source: string): string | null {
-  const m = source.match(reHeaderImportRun);
-  if (!m) {
-    return null;
-  }
-  const chars = source.split('');
-  const end = m[1].length + m[2].length;
-  for (let i = m[1].length; i < end; i++) {
-    if (chars[i] !== '\n' && chars[i] !== '\r') {
-      chars[i] = ' ';
-    }
-  }
-  return chars.join('');
-}
-
-// Last resort: terminate the header right after the name so the import becomes
-// an ordinary body statement the declaration scanner reads.
+// `parseModule`'s header pattern swallows the header import's own `;` through a
+// lazy `(?<import>...)` group and then still demands one terminator. A header
+// that is a name plus package import(s) with no parameter list and no port list
+// therefore matches nothing (both lists are optional, LRM 23.2.1) — the most
+// common UVM testbench opening line. Every header that has either list already
+// parses on the direct path, so the single reachable fallback is to retry with
+// one `;` inserted after the name, which turns the import into an ordinary body
+// statement for the declaration scanner. The retry only runs after the direct
+// parse returned null, so currently-parsing headers keep their result.
 function withHeaderTerminator(source: string): string | null {
   const m = source.match(/^\s*(?:module|interface)\s+(?:(?:automatic|static)\s+)*[A-Za-z_]\w*/);
   if (!m) {
@@ -404,15 +384,6 @@ function parseModuleHeader(source: string, nameRe: string): ReturnType<typeof pa
   const info = parseModule(source, nameRe);
   if (info) {
     return info;
-  }
-  // Blank the import run first: length-preserving spaces keep a following port
-  // or parameter list at the same offsets, so it still parses as before.
-  const blanked = blankHeaderImports(source);
-  if (blanked !== null) {
-    const retried = parseModule(blanked, nameRe);
-    if (retried) {
-      return retried;
-    }
   }
   const terminated = withHeaderTerminator(source);
   return terminated === null ? null : parseModule(terminated, nameRe);
