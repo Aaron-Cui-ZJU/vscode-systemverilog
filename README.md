@@ -103,8 +103,9 @@ npm test
 ```
 
 `npm test` covers the parser, beautifier, filelists, directory globbing, instance
-lookup and activation. Compile before testing. The activation test simulates the
-published environment, where `node_modules` is not shipped.
+lookup, port completion, scope symbols, the completion provider and activation.
+Compile before testing. The activation test simulates the published environment,
+where `node_modules` is not shipped.
 
 ## License and attribution
 

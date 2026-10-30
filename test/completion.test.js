@@ -318,6 +318,257 @@ async function run() {
   const oldNames = scopeSymbols.symbolsAt(oldTable, oldTable.text.length).map((s) => s.name);
   checkTrue('the old table still holds the declaration removed from the document', oldNames.includes('old_only'));
 
+  // ------------------------------------------------ package import members ---
+  // `import pkg::*;` members come from the workspace index, which is only read
+  // once it reports itself built: the first keystroke must never wait for the
+  // background scan.
+  const indexer = require('../out/indexer.js');
+  const INDEX = indexer.INDEX;
+  const kindOf = vscode().CompletionItemKind;
+  const hasPackageRow = (items) =>
+    (items || []).some((i) => typeof i.sortText === 'string' && i.sortText.startsWith('1'));
+
+  check('the headless index starts unbuilt', INDEX.isBuilt(), false);
+
+  const pkgText = [
+    'package my_pkg;',
+    '  parameter int PKG_CONST = 1;',
+    '  typedef enum logic [1:0] {A1, A2} pkg_state_t;',
+    'endpackage',
+    'module top;',
+    '  import my_pkg::*;',
+    '  logic [7:0] data_valid;',
+    '  da',
+    'endmodule',
+  ].join('\n');
+  const docPkg = stub.makeDocument(pkgText, { fileName: '/tmp/stub_pkg_unbuilt.sv' });
+  const pkgItems = await providerC.provideCompletionItems(docPkg, atLine(docPkg, 7));
+  checkTrue('an unbuilt index still returns the local declarations', hasLabel(pkgItems, 'data_valid'));
+  check('an unbuilt index adds no package rows', hasPackageRow(pkgItems), false);
+
+  check('peekPackage() answers null while the index is unbuilt', await INDEX.peekPackage('nope'), null);
+
+  let ensureIndexCalls = 0;
+  INDEX.ensureIndex = function () {
+    ensureIndexCalls++;
+    return Promise.resolve();
+  };
+  let peekUnbuilt = null;
+  let probeUnbuilt = null;
+  try {
+    peekUnbuilt = await INDEX.peekPackage('nope');
+    probeUnbuilt = await providerC.provideCompletionItems(docPkg, atLine(docPkg, 7));
+  } finally {
+    delete INDEX.ensureIndex;
+  }
+  check('peekPackage() stays null with ensureIndex() stubbed', peekUnbuilt, null);
+  check('neither peekPackage() nor the provider starts an index build', ensureIndexCalls, 0);
+  checkTrue('the unbuilt probe still returns a candidate array', Array.isArray(probeUnbuilt));
+
+  // A simulated built index: the wildcard-imported package's members are added
+  // as `'1'`-prefixed rows, and a package the document never imports adds none.
+  const pkgMembers = [
+    { name: 'PKG_CONST', tag: 'decl', decl: 'int PKG_CONST' },
+    { name: 'pkg_state_t', tag: 'enum', decl: 'typedef enum {A1, A2} pkg_state_t' },
+  ];
+  const peeked = [];
+  INDEX.isBuilt = () => true;
+  INDEX.peekPackage = async (name) => {
+    peeked.push(name);
+    return name === 'my_pkg' ? pkgMembers : null;
+  };
+  let builtItems = [];
+  let otherItems = [];
+  try {
+    builtItems = await providerC.provideCompletionItems(docPkg, atLine(docPkg, 7));
+    const otherDoc = stub.makeDocument(pkgText.replace('my_pkg::*', 'other_pkg::*'), {
+      fileName: '/tmp/stub_pkg_other.sv',
+    });
+    otherItems = await providerC.provideCompletionItems(otherDoc, atLine(otherDoc, 7));
+  } finally {
+    delete INDEX.isBuilt;
+    delete INDEX.peekPackage;
+  }
+
+  const constRow = (builtItems || []).find((i) => i.label === 'PKG_CONST');
+  checkTrue('a built index offers the imported package constant', !!constRow);
+  check('the package constant is a Constant row', constRow && constRow.kind, kindOf.Constant);
+  check('the package constant sorts after the local symbols', constRow && constRow.sortText, '1PKG_CONST');
+  check('the package constant carries the declaration text', constRow && constRow.detail, 'int PKG_CONST');
+  check('the package constant inserts its bare name', constRow && constRow.insertText, 'PKG_CONST');
+  checkTrue(
+    'the package enum type is offered as a Class row',
+    (builtItems || []).some((i) => i.label === 'pkg_state_t' && i.kind === kindOf.Class)
+  );
+  check(
+    'the package enum values are EnumMember rows',
+    (builtItems || []).filter((i) => i.kind === kindOf.EnumMember).map((i) => i.label).sort(),
+    ['A1', 'A2']
+  );
+  checkTrue('the wildcard import is resolved to its package', peeked.includes('my_pkg'));
+  checkTrue('a built index keeps the local declarations', hasLabel(builtItems, 'data_valid'));
+  check('a package the document does not import contributes no rows', hasPackageRow(otherItems), false);
+  checkTrue('the other document still returns its local declaration', hasLabel(otherItems, 'data_valid'));
+  checkTrue("the other document offers no members of the unimported package", !labels(otherItems).includes('A1'));
+
+  // ------------------------------------- symbol kinds and symbol ranking -----
+  // One module declares every kind the engine can produce, so the provider's
+  // `ScopeSymbolKind` -> `vscode.CompletionItemKind` map is pinned in one place.
+  const kindsText = [
+    'module kinds #(parameter int W = 8) (',
+    '  input logic clk,',
+    '  output logic [W-1:0] data',
+    ');',
+    '  typedef enum logic [1:0] {IDLE, RUN} state_t;',
+    '  typedef struct packed { logic sbit; } pair_t;',
+    '  logic addr;',
+    '  child u_child (.a(addr));',
+    '  function automatic int f(int x);',
+    '    int tmp;',
+    '    tmp = x;',
+    '    return tmp;',
+    '  endfunction',
+    '  task t();',
+    '    int tv;',
+    '  endtask',
+    'endmodule',
+  ].join('\n');
+  const docKinds = stub.makeDocument(kindsText, { fileName: '/tmp/stub_kinds.sv' });
+  const kindItems = await providerC.provideCompletionItems(docKinds, atLine(docKinds, 6));
+  const kindOfLabel = (list, label) => {
+    const row = (list || []).find((i) => i.label === label);
+    return row && row.kind;
+  };
+
+  check('port clk is a Field row', kindOfLabel(kindItems, 'clk'), kindOf.Field);
+  check('port data is a Field row', kindOfLabel(kindItems, 'data'), kindOf.Field);
+  check('header parameter W is a Constant row', kindOfLabel(kindItems, 'W'), kindOf.Constant);
+  check('instance u_child is a Field row', kindOfLabel(kindItems, 'u_child'), kindOf.Field);
+  check('signal addr is a Field row', kindOfLabel(kindItems, 'addr'), kindOf.Field);
+  check('enum typedef state_t is a Class row', kindOfLabel(kindItems, 'state_t'), kindOf.Class);
+  check('struct typedef pair_t is a Class row', kindOfLabel(kindItems, 'pair_t'), kindOf.Class);
+  check('enum value IDLE is an EnumMember row', kindOfLabel(kindItems, 'IDLE'), kindOf.EnumMember);
+  check('enum value RUN is an EnumMember row', kindOfLabel(kindItems, 'RUN'), kindOf.EnumMember);
+  check('function f is a Function row', kindOfLabel(kindItems, 'f'), kindOf.Function);
+  check('task t is a Method row', kindOfLabel(kindItems, 't'), kindOf.Method);
+
+  // A function body also lists the enclosing scope plus its own locals/arguments.
+  const fnItems = await providerC.provideCompletionItems(docKinds, atLine(docKinds, 11));
+  check('function-local tmp is a Variable row', kindOfLabel(fnItems, 'tmp'), kindOf.Variable);
+  check('function argument x is a Variable row', kindOfLabel(fnItems, 'x'), kindOf.Variable);
+  checkTrue('a function body still sees the enclosing module port', hasLabel(fnItems, 'clk'));
+
+  const taskItems = await providerC.provideCompletionItems(docKinds, atLine(docKinds, 14));
+  check('task-local tv is a Variable row', kindOfLabel(taskItems, 'tv'), kindOf.Variable);
+
+  // Ranking: symbol rows carry a `'0'`-prefixed sortText, snippets carry none, so
+  // `'0addr'` sorts before the `always_ff` label and symbol rows lead the list.
+  const rankText = ['module top;', '  logic addr;', '  a', 'endmodule'].join('\n');
+  const docRank = stub.makeDocument(rankText, { fileName: '/tmp/stub_rank.sv' });
+  const rankItems = await providerC.provideCompletionItems(docRank, atLine(docRank, 2));
+  const addrRow = (rankItems || []).find((i) => i.label === 'addr');
+  const ffRow = (rankItems || []).find((i) => i.label === 'always_ff');
+  check('a symbol row keeps the 0-prefixed sortText', addrRow && addrRow.sortText, '0addr');
+  check('the always_ff snippet keeps no sortText', ffRow && ffRow.sortText, undefined);
+  checkTrue(
+    'symbol rows sort before the always_ff snippet',
+    !!addrRow && typeof addrRow.sortText === 'string' && addrRow.sortText < 'always_ff'
+  );
+
+  // ------------------------------------------ regression: untouched paths -----
+  // No cross-scope leakage: a sibling module's declarations stay out of the list.
+  const crossText = [
+    'module one;',
+    '  logic one_only;',
+    '  one',
+    'endmodule',
+    'module two;',
+    '  logic two_only;',
+    '  two',
+    'endmodule',
+  ].join('\n');
+  const docCross = stub.makeDocument(crossText, { fileName: '/tmp/stub_cross.sv' });
+  const crossOne = await providerC.provideCompletionItems(docCross, atLine(docCross, 2));
+  const crossTwo = await providerC.provideCompletionItems(docCross, atLine(docCross, 6));
+  checkTrue('module one sees its own declaration', hasLabel(crossOne, 'one_only'));
+  check('module one never sees module two declarations', hasLabel(crossOne, 'two_only'), false);
+  checkTrue('module two sees its own declaration', hasLabel(crossTwo, 'two_only'));
+  check('module two never sees module one declarations', hasLabel(crossTwo, 'one_only'), false);
+
+  // `$` and `` ` `` contexts keep their own candidate sets and add no symbol rows.
+  const ctxDecl = ['module ctx;', '  logic [7:0] data_valid;'];
+  const dollarText = ctxDecl.concat(['  $di', 'endmodule']).join('\n');
+  const docDollar = stub.makeDocument(dollarText, { fileName: '/tmp/stub_ctx_dollar.sv' });
+  const dollarItems = await providerC.provideCompletionItems(docDollar, atLine(docDollar, 2));
+  checkTrue("'$di' still yields $display()", (dollarItems || []).some((i) => i.detail === '$display()'));
+  check(
+    'the $ context adds no symbol rows',
+    (dollarItems || []).filter((i) => typeof i.sortText === 'string' && i.sortText.startsWith('0')).length,
+    0
+  );
+
+  const tickCtxText = ctxDecl.concat(['  `inc', 'endmodule']).join('\n');
+  const docTickCtx = stub.makeDocument(tickCtxText, { fileName: '/tmp/stub_ctx_tick.sv' });
+  const tickCtxItems = await providerC.provideCompletionItems(docTickCtx, atLine(docTickCtx, 2));
+  checkTrue("'`inc' still yields `include", hasLabel(tickCtxItems, 'include'));
+  check(
+    'the backtick context adds no symbol rows',
+    (tickCtxItems || []).filter((i) => typeof i.sortText === 'string' && i.sortText.startsWith('0')).length,
+    0
+  );
+
+  // `::` keeps resolving the local enum type and nothing from the symbol table.
+  const scopeCtxText = [
+    'module scope_ctx;',
+    '  typedef enum logic [1:0] {IDLE, RUN} state_t;',
+    '  logic [7:0] data_valid;',
+    '  state_t::',
+    'endmodule',
+  ].join('\n');
+  const docScopeCtx = stub.makeDocument(scopeCtxText, { fileName: '/tmp/stub_ctx_scope.sv' });
+  const scopeCtxItems = await providerC.provideCompletionItems(docScopeCtx, atLine(docScopeCtx, 3));
+  check("'::' still returns only the enum members", labels(scopeCtxItems).sort(), ['IDLE', 'RUN']);
+  check(
+    'the :: context adds no symbol rows',
+    (scopeCtxItems || []).filter((i) => typeof i.sortText === 'string' && i.sortText.startsWith('0')).length,
+    0
+  );
+
+  // Malformed input must degrade to a candidate list, never throw.
+  async function completionOrError(text, line, fileName) {
+    const doc = stub.makeDocument(text, { fileName });
+    try {
+      const items = await providerC.provideCompletionItems(doc, atLine(doc, line));
+      return { error: '', items };
+    } catch (e) {
+      return { error: (e && e.message) || String(e), items: null };
+    }
+  }
+
+  const malComment = await completionOrError(
+    ['module top;', '  /* unterminated', '  da'].join('\n'),
+    2,
+    '/tmp/stub_mal_comment.sv'
+  );
+  check('an unterminated block comment does not throw', malComment.error, '');
+  checkTrue('an unterminated block comment still returns candidates', Array.isArray(malComment.items));
+
+  const malNoEnd = await completionOrError(
+    ['module top;', '  logic [7:0] data_valid;', '  da'].join('\n'),
+    2,
+    '/tmp/stub_mal_noend.sv'
+  );
+  check('a module without endmodule does not throw', malNoEnd.error, '');
+  checkTrue('a module without endmodule still offers its declaration', hasLabel(malNoEnd.items, 'data_valid'));
+
+  const malString = await completionOrError(
+    ['module top;', '  string s = "module";', '  da', 'endmodule'].join('\n'),
+    2,
+    '/tmp/stub_mal_string.sv'
+  );
+  check('a module keyword inside a string literal does not throw', malString.error, '');
+  checkTrue('a module keyword inside a string literal still returns candidates', Array.isArray(malString.items));
+
   console.log(`\nPASS=${pass} FAIL=${fail}`);
   process.exit(fail ? 1 : 0);
 }
