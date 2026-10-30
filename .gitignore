@@ -4,3 +4,4 @@ AGENTS.md
 *.vsix
 .vscode-test/
 test/parser-out.txt
+.omo/
