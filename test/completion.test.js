@@ -242,6 +242,25 @@ async function run() {
     1
   );
 
+  // (i) `u` is the fourth letter branch and only one it did not previously pin:
+  // it used to short-circuit to the UVM list. Both the UVM rows and the local
+  // declaration have to survive, and the declaration has to rank ahead of them,
+  // so restoring the short-circuit cannot pass this suite again.
+  const symUText = ['module top;', '  logic u_addr;', '  u', 'endmodule'].join('\n');
+  const docSymU = stub.makeDocument(symUText, { fileName: '/tmp/stub_sym_u.sv' });
+  const symUItems = await provider.provideCompletionItems(docSymU, atLine(docSymU, 2));
+  const uvmRows = (symUItems || []).filter((i) => typeof i.label === 'string' && i.label.startsWith('uvm_'));
+  checkTrue(
+    "'u' yields both a UVM row and the u_addr declaration",
+    uvmRows.length > 0 && hasLabel(symUItems, 'u_addr')
+  );
+  const uAddrRow = (symUItems || []).find((i) => i.label === 'u_addr');
+  const uAddrSort = uAddrRow && (uAddrRow.sortText || uAddrRow.label);
+  checkTrue(
+    'u_addr sorts strictly before every uvm_* label',
+    !!uAddrSort && uvmRows.every((r) => uAddrSort < (r.sortText || r.label))
+  );
+
   // ----------------------------------------------------------- stale state ---
   // Two providers in one process must not cross-contaminate. Today the observable
   // document-derived data on this path is the auto-detected clock name baked into
@@ -443,6 +462,14 @@ async function run() {
   check('port clk is a Field row', kindOfLabel(kindItems, 'clk'), kindOf.Field);
   check('port data is a Field row', kindOfLabel(kindItems, 'data'), kindOf.Field);
   check('header parameter W is a Constant row', kindOfLabel(kindItems, 'W'), kindOf.Constant);
+  const paramRow = (kindItems || []).find((i) => i.label === 'W');
+  checkTrue(
+    'header parameter W detail keeps the declaration text',
+    !!paramRow &&
+      typeof paramRow.detail === 'string' &&
+      paramRow.detail.includes('W') &&
+      paramRow.detail.includes('8')
+  );
   check('instance u_child is a Field row', kindOfLabel(kindItems, 'u_child'), kindOf.Field);
   check('signal addr is a Field row', kindOfLabel(kindItems, 'addr'), kindOf.Field);
   check('enum typedef state_t is a Class row', kindOfLabel(kindItems, 'state_t'), kindOf.Class);
