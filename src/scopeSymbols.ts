@@ -363,6 +363,61 @@ function stripLifetime(source: string, kind: BlockKind): string {
   return source.replace(/^(\s*(?:module|interface))\s+(?:(?:automatic|static)\s+)+/, '$1 ');
 }
 
+// The header-level `package_import_declaration` run of `module m import p::*;`
+// (LRM 23.2.1), after the keyword, an optional lifetime and the identifier.
+const reHeaderImportRun =
+  /^(\s*(?:module|interface)\s+(?:(?:automatic|static)\s+)*[A-Za-z_]\w*)((?:\s+import\s+[^;]*;)+)/;
+
+// `parseModule`'s header pattern consumes the import's own `;` through a lazy
+// `(?<import>...)` group and still demands a terminator. With a parameter or
+// port list the later `;` satisfies it; a header that carries only an import
+// (both lists are optional) matches nothing, so the module used to expose no
+// symbols at all — the most common UVM testbench opening line. Retry inputs are
+// built only after the normal parse failed, so every currently-parsing header
+// keeps its result.
+function blankHeaderImports(source: string): string | null {
+  const m = source.match(reHeaderImportRun);
+  if (!m) {
+    return null;
+  }
+  const chars = source.split('');
+  const end = m[1].length + m[2].length;
+  for (let i = m[1].length; i < end; i++) {
+    if (chars[i] !== '\n' && chars[i] !== '\r') {
+      chars[i] = ' ';
+    }
+  }
+  return chars.join('');
+}
+
+// Last resort: terminate the header right after the name so the import becomes
+// an ordinary body statement the declaration scanner reads.
+function withHeaderTerminator(source: string): string | null {
+  const m = source.match(/^\s*(?:module|interface)\s+(?:(?:automatic|static)\s+)*[A-Za-z_]\w*/);
+  if (!m) {
+    return null;
+  }
+  return source.slice(0, m[0].length) + ';' + source.slice(m[0].length);
+}
+
+function parseModuleHeader(source: string, nameRe: string): ReturnType<typeof parseModule> {
+  const info = parseModule(source, nameRe);
+  if (info) {
+    return info;
+  }
+  // Blank the import run first: length-preserving spaces keep a following port
+  // or parameter list at the same offsets, so it still parses as before.
+  const blanked = blankHeaderImports(source);
+  if (blanked !== null) {
+    const retried = parseModule(blanked, nameRe);
+    if (retried) {
+      return retried;
+    }
+  }
+  const terminated = withHeaderTerminator(source);
+  return terminated === null ? null : parseModule(terminated, nameRe);
+}
+
 function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
   const out: ScopeSymbol[] = [];
   const source = stripLifetime(withTerminator(slice, span.kind), span.kind);
@@ -380,7 +435,7 @@ function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
     pushFunctionNames(out, source);
     return out;
   }
-  const info = parseModule(source, escapeRe(span.name));
+  const info = parseModuleHeader(source, escapeRe(span.name));
   if (info) {
     for (const p of info.port) {
       out.push({ name: p.name, detail: p.decl ?? p.type ?? p.name, kind: 'port' });

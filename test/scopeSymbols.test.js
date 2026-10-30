@@ -345,6 +345,34 @@ check('header import param: input c', kindOf(hiParamSymbols, 'c'), 'port');
 check('header import param: parameter W', kindOf(hiParamSymbols, 'W'), 'param');
 check('header import param: signal s', kindOf(hiParamSymbols, 's'), 'signal');
 
+// A header that carries ONLY the import: both the parameter port list and the
+// port list are optional (LRM 23.2.1), so `module tb import uvm_pkg::*;` is
+// legal and must not collapse the whole module to an empty scope.
+const hiOnlyText = ['module m import p::*;', '  logic s;', 'endmodule'].join('\n');
+const hiOnlyTable = buildScopeTable(hiOnlyText);
+check('header import only: span count', hiOnlyTable.spans.length, 1);
+check('header import only: span name', hiOnlyTable.spans[0].name, 'm');
+check(
+  'header import only: signal s',
+  kindOf(symbolsAt(hiOnlyTable, endOfLine(hiOnlyText, '  logic s;')), 's'),
+  'signal'
+);
+
+const hiTwoText = ['module m import a::*; import b::*;', '  logic s;', 'endmodule'].join('\n');
+const hiTwoTable = buildScopeTable(hiTwoText);
+check('header import run: span count', hiTwoTable.spans.length, 1);
+check('header import run: signal s', kindOf(symbolsAt(hiTwoTable, endOfLine(hiTwoText, '  logic s;')), 's'), 'signal');
+
+const hiPortText = ['module m import p::*; (input logic c);', '  logic s;', 'endmodule'].join('\n');
+const hiPortSymbols = symbolsAt(buildScopeTable(hiPortText), endOfLine(hiPortText, '  logic s;'));
+check('header import with ports: input c', kindOf(hiPortSymbols, 'c'), 'port');
+check('header import with ports: signal s', kindOf(hiPortSymbols, 's'), 'signal');
+
+const hiIfText = ['interface i import p::*;', '  logic v;', 'endinterface'].join('\n');
+const hiIfTable = buildScopeTable(hiIfText);
+check('header import interface: span name', hiIfTable.spans[0].name, 'i');
+check('header import interface: signal v', kindOf(symbolsAt(hiIfTable, endOfLine(hiIfText, '  logic v;')), 'v'), 'signal');
+
 // ------------------------------------------- adversarial: lifetime modifiers
 
 // `module automatic m;` / `module static m;` (LRM 23.2.1).
