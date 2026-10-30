@@ -73,11 +73,25 @@ function readName(masked: string, from: number): string {
   return m ? m[1] : '';
 }
 
-// End of a module/interface header: the first `;` outside every bracket.
+// `module m import pkg::*; ...` (LRM 23.2.1) puts a package import between the
+// module identifier and the port list. The import's own `;` is not the header
+// terminator: strip the lifetime/identifier prefix, then look for `import`.
+function isImportStatement(statement: string): boolean {
+  let rest = statement.replace(/^\s*(?:(?:automatic|static)\s+)*/, '').trim();
+  if (/^import\b/.test(rest)) {
+    return true;
+  }
+  rest = rest.replace(/^[A-Za-z_]\w*\s+/, '').trim();
+  return /^import\b/.test(rest);
+}
+
+// End of a module/interface header: the first `;` outside every bracket that
+// does not terminate a header-level `package_import_declaration`.
 function headerEnd(masked: string, from: number): number {
   let paren = 0;
   let bracket = 0;
   let brace = 0;
+  let boundary = from;
   for (let i = from; i < masked.length; i++) {
     const c = masked[i];
     if (c === '(') {
@@ -99,7 +113,11 @@ function headerEnd(masked: string, from: number): number {
         brace--;
       }
     } else if (c === ';' && paren === 0 && bracket === 0 && brace === 0) {
-      return i;
+      const statement = masked.slice(boundary, i);
+      boundary = i + 1;
+      if (!isImportStatement(statement)) {
+        return i;
+      }
     }
   }
   return masked.length;
@@ -486,7 +504,10 @@ export function isCodePosition(table: ScopeTable, offset: number): boolean {
 
 export function importedPackages(text: string): string[] {
   const masked = maskComments(text);
-  const re = /^[ \t]*import\s+([^;]+);/gm;
+  // Statement-level rather than line-anchored: `module m import pkg::*; ...`
+  // carries the import on the header line. Comments and strings are masked, and
+  // the `endsWith('::*')` filter below drops `import "DPI-C" ...` specs.
+  const re = /\bimport\s+([^;]+);/g;
   const out: string[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked)) !== null) {

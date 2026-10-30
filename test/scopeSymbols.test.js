@@ -206,6 +206,8 @@ check('importedPackages multiline', importedPackages('module m;\n  import p1::*;
 ]);
 check('importedPackages dedupe', importedPackages('import a::*;\nimport a::*;'), ['a']);
 check('importedPackages string literal', importedPackages('s = "import z::*;";'), []);
+check('importedPackages header import', importedPackages('module m import pkg::*;'), ['pkg']);
+check('importedPackages DPI-C spec', importedPackages('import "DPI-C" function int f();'), []);
 
 const leakText = ['module a;', '  import p1::*;', 'endmodule', 'module b;', '  import p2::*;', 'endmodule'].join('\n');
 const leakTable = buildScopeTable(leakText);
@@ -317,6 +319,31 @@ check('modport interface port: span count', gifMpTable.spans.length, 1);
 check('modport interface port: span name', gifMpTable.spans[0].name, 'm');
 check('modport interface port: signal s', kindOf(symbolsAt(gifMpTable, endOfLine(gifMpText, '  logic s;')), 's'), 'signal');
 checkTrue('modport interface port: no phantom span', !gifMpTable.spans.some((s) => s.name === 'i'));
+
+// --------------------------------------- adversarial: header-level import
+//                          (LRM 23.2.1)
+
+// The import before the port list must not hide the port list from the header
+// region: otherwise the generic `interface` port opens a phantom span to EOF.
+const hiText = ['module m import pkg::*; (interface i);', '  logic s;', 'endmodule'].join('\n');
+const hiTable = buildScopeTable(hiText);
+check('header import: span count', hiTable.spans.length, 1);
+check('header import: span name', hiTable.spans[0].name, 'm');
+checkTrue('header import: no phantom span', !hiTable.spans.some((s) => s.name === 'i'));
+check('header import: signal s', kindOf(symbolsAt(hiTable, endOfLine(hiText, '  logic s;')), 's'), 'signal');
+
+const hiParamText = [
+  'module m import pkg::*; #(parameter int W=8) (input logic c);',
+  '  logic s;',
+  'endmodule',
+].join('\n');
+const hiParamTable = buildScopeTable(hiParamText);
+const hiParamSymbols = symbolsAt(hiParamTable, endOfLine(hiParamText, '  logic s;'));
+check('header import param: span count', hiParamTable.spans.length, 1);
+check('header import param: span name', hiParamTable.spans[0].name, 'm');
+check('header import param: input c', kindOf(hiParamSymbols, 'c'), 'port');
+check('header import param: parameter W', kindOf(hiParamSymbols, 'W'), 'param');
+check('header import param: signal s', kindOf(hiParamSymbols, 's'), 'signal');
 
 // ------------------------------------------- adversarial: lifetime modifiers
 
