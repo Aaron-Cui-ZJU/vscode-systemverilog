@@ -10,17 +10,20 @@ import {
 } from './config';
 import { INDEX } from './indexer';
 import { serverProvidesCompletion } from './languageServer';
-import { cleanDocument, documentAllTypeInfo } from './documentCache';
+import { cleanDocument, documentAllTypeInfo, documentText } from './documentCache';
 import {
   FuncInfo,
+  ModuleInfo,
   TypeInfo,
   cleanComment,
   fillCase,
   getAllTypeInfo,
   getEnumValues,
   getTypeInfo,
+  parseModule,
   reDecl,
 } from './parser';
+import { buildBindingSuggestions, findPortBindingContext } from './portCompletion';
 import { typeInfo } from './lookup';
 import * as logger from './logger';
 
@@ -327,6 +330,47 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
         prevSym = '::';
       } else if (/[.`:$]/.test(beforePrefix.slice(-1))) {
         prevSym = beforePrefix.slice(-1);
+      }
+      if (prevSym === '.') {
+        const ctx = findPortBindingContext(documentText(document), document.offsetAt(position));
+        if (ctx) {
+          const clean = cleanDocument(document);
+          let info: ModuleInfo | null = null;
+          if (new RegExp('\\b(?:module|interface)\\s+' + escapeRegExp(ctx.moduleName) + '\\b').test(clean)) {
+            info = parseModule(clean, ctx.moduleName, false, true);
+          }
+          if (!info) {
+            const found = await INDEX.lookupModule(ctx.moduleName);
+            info = found ? found.info : null;
+          }
+          if (info) {
+            const suggestions = buildBindingSuggestions(ctx, info.port);
+            const range = new vscode.Range(position.translate(0, -prefix.length), position);
+            const edits =
+              ctx.commaOffset !== null
+                ? [vscode.TextEdit.insert(document.positionAt(ctx.commaOffset), ',')]
+                : undefined;
+            return suggestions.map((s, i) => {
+              const ci = new vscode.CompletionItem(s.label, vscode.CompletionItemKind.Field);
+              ci.detail = s.detail;
+              ci.sortText = String(s.order).padStart(4, '0');
+              ci.filterText = s.label;
+              ci.range = range;
+              if (s.isSnippet) {
+                ci.insertText = new vscode.SnippetString(s.insertText);
+              } else {
+                ci.insertText = s.insertText;
+              }
+              if (i === 0) {
+                ci.preselect = true;
+              }
+              if (edits) {
+                ci.additionalTextEdits = edits;
+              }
+              return ci;
+            });
+          }
+        }
       }
       if (cfg.languageServerEnabled && serverProvidesCompletion() && (prevSym === '.' || prevSym === '::')) {
         // Member / scope completion depends on cross-file resolution; when the

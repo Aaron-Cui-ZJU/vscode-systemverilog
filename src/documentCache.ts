@@ -42,6 +42,10 @@ function cleanedOf(e: DocEntry): string {
   return e.cleaned;
 }
 
+export function documentText(document: vscode.TextDocument): string {
+  return entryFor(document).text;
+}
+
 export function cleanDocument(document: vscode.TextDocument): string {
   return cleanedOf(entryFor(document));
 }
