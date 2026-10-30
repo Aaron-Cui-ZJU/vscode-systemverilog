@@ -26,8 +26,9 @@ SystemVerilog / Verilog support for VS Code, ported from the Sublime Text
   actually use the signal, skipping the levels that only forward it); configurable
   direction colors.
 - **Completion**: adaptive `always` / `always_ff` / `always_comb` snippets; dot and
-  `::` completion; enum/vector `case` completion; system tasks, directives, UVM
-  functions and keyword snippets.
+  `::` completion; missing-port completion inside module/interface instantiations
+  (type `.` in the port list to list ports not yet bound); enum/vector `case`
+  completion; system tasks, directives, UVM functions and keyword snippets.
 - **Editing**: alignment, reindent, module instantiation with parameter prompts
   and auto-connect, `.*` expansion, FSM template generation, block move/select.
 - **Linting**: find unused and undeclared signals.
