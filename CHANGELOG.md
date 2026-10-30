@@ -1,8 +1,17 @@
 # Change Log
 
-## Unreleased
+## 1.4.0 (2026-10-30)
 
-- Complete declarations visible in the current scope (ports, parameters, signals, variables, instance names, typedefs, enum members, function/task names, function-local variables and members of `import pkg::*` packages), ranked above the snippets, with nothing offered inside comments or string literals
+- Complete declarations visible in the current scope: module and interface ports and instance names, module, interface and package parameters, signals and variables, typedefs, enum members, function and task names, and function-local variables
+- Rank the scope rows above the snippet rows instead of leaving them behind the `a`/`u`/`m`/`end` snippet labels
+- Complete members of packages imported with `import pkg::*` without stalling the first keystroke on a workspace index build
+- Offer no declarations inside comments or string literals
+- Suggest the scope declarations on `Ctrl+Space` with an empty prefix
+- Register functions whose return type is a packed range after a lifetime qualifier
+- Show a parameter's full declaration as its completion detail
+- Stop treating `virtual interface` and `interface class` as scopes, and identify generic interface ports and module/interface lifetimes
+- Keep a module header's port list when the header carries a package import
+- Run the scope-symbol and completion-provider suites as part of `npm test`
 
 
 ## 1.3.0 (2026-10-28)
