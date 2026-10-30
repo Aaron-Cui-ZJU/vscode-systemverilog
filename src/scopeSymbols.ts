@@ -107,6 +107,18 @@ function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
       classStack.push(m.index);
       continue;
     }
+    if (kw === 'interface') {
+      // `virtual interface if_t vif;` is a variable declaration, not a scope.
+      const before = masked.slice(Math.max(0, m.index - 32), m.index);
+      if (/(?:^|[^\w$])virtual\s+$/.test(before)) {
+        continue;
+      }
+      // `interface class C;` is a class declaration; the `class` token that
+      // follows opens the class scope.
+      if (/^\s*class\b/.test(masked.slice(tokenEnd))) {
+        continue;
+      }
+    }
     stack.push({ kind: kw as BlockKind, name: readName(masked, tokenEnd), start: m.index });
   }
   for (const open of stack) {

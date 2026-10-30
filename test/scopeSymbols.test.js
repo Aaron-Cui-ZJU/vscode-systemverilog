@@ -260,6 +260,43 @@ check('module in string: no span', strTable.spans.length, 0);
 checkTrue('module in string: not in masked', !strTable.masked.includes('fake'));
 checkTrue('module in string: unit decl kept', names(symbolsAt(strTable, strText.indexOf('logic real_one') + 3)).includes('real_one'));
 
+// ------------------------------------- adversarial: interface keyword guards
+
+// `virtual interface` is a declaration, not a block opener.
+const vifText = ['module m;', '  virtual interface my_if vif;', '  logic a;', 'endmodule', 'logic g2;'].join('\n');
+const vifTable = buildScopeTable(vifText);
+check('virtual interface: module signal a', kindOf(symbolsAt(vifTable, endOfLine(vifText, '  logic a;')), 'a'), 'signal');
+check('virtual interface: $unit signal g2', kindOf(symbolsAt(vifTable, endOfLine(vifText, 'logic g2;')), 'g2'), 'signal');
+checkTrue('virtual interface: no phantom span', !vifTable.spans.some((s) => s.name === 'my_if'));
+
+const vifClassText = ['class drv;', '  virtual interface my_if vif;', 'endclass', 'logic tail;'].join('\n');
+const vifClassTable = buildScopeTable(vifClassText);
+const vifTailSymbols = symbolsAt(vifClassTable, endOfLine(vifClassText, 'logic tail;'));
+check('virtual interface in class: $unit signal tail', kindOf(vifTailSymbols, 'tail'), 'signal');
+checkTrue('virtual interface in class: no phantom span', !vifClassTable.spans.some((s) => s.name === 'my_if'));
+
+// `interface class` is a class, not an interface.
+const icText = [
+  'interface class my_ic;',
+  '  pure virtual function int f();',
+  'endclass',
+  'module after_ic;',
+  '  logic y;',
+  'endmodule',
+].join('\n');
+const icTable = buildScopeTable(icText);
+const icBodySymbols = symbolsAt(icTable, endOfLine(icText, '  pure virtual function int f();'));
+checkTrue('interface class: no span named class', !icTable.spans.some((s) => s.name === 'class'));
+checkTrue('interface class: body has no leak from later module', !names(icBodySymbols).includes('y'));
+
+// A real interface still opens a scope guard did not widen.
+const realIfText = ['interface bus;', '  logic v;', 'endinterface'].join('\n');
+const realIfTable = buildScopeTable(realIfText);
+const realIfSymbols = symbolsAt(realIfTable, endOfLine(realIfText, '  logic v;'));
+check('real interface: span kind', realIfTable.spans[0].kind, 'interface');
+check('real interface: span name', realIfTable.spans[0].name, 'bus');
+check('real interface: signal v', kindOf(realIfSymbols, 'v'), 'signal');
+
 // ------------------------------------------------ adversarial: stale state
 
 const first = buildScopeTable(sv);
