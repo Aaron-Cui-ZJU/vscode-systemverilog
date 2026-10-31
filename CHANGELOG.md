@@ -1,5 +1,10 @@
 # Change Log
 
+## 1.5.0 (2026-10-31)
+
+- Add class scope, out-of-body task locals, and file-wide word completion
+
+
 ## 1.4.0 (2026-10-30)
 
 - Complete declarations visible in the current scope: module and interface ports and instance names, module, interface and package parameters, signals and variables, typedefs, enum members, function and task names, and function-local variables
