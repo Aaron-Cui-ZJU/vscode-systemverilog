@@ -596,6 +596,24 @@ async function run() {
   check('a module keyword inside a string literal does not throw', malString.error, '');
   checkTrue('a module keyword inside a string literal still returns candidates', Array.isArray(malString.items));
 
+  // ----------------------------------------------------- file-word completion
+  const fwText2 = [
+    'class seq_c extends uvm_sequence;',
+    '  virtual task body();',
+    '    p_sequencer.set_config_int("a", 1);',
+    '    bit [3:0] use_gpio_as_en;',
+    '    p_se',
+    '  endtask',
+    'endclass',
+  ].join('\n');
+  const docFw2 = stub.makeDocument(fwText2, { fileName: '/tmp/stub_fileword2.sv' });
+  const fwLine2 = docFw2.lineAt(4).text;
+  const fwItems2 = await provider.provideCompletionItems(
+    docFw2,
+    new (vscode().Position)(4, fwLine2.length)
+  );
+  checkTrue('file word: p_sequencer appears for prefix p_se', hasLabel(fwItems2, 'p_sequencer'));
+
   console.log(`\nPASS=${pass} FAIL=${fail}`);
   process.exit(fail ? 1 : 0);
 }

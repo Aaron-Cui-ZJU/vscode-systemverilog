@@ -226,12 +226,14 @@ const dupSymbols = symbolsAt(buildScopeTable(dupText), dupText.indexOf('int a') 
 check('dedupe keeps one entry', dupSymbols.filter((s) => s.name === 'a').length, 1);
 check('dedupe keeps first declaration', dupSymbols.find((s) => s.name === 'a').detail, 'logic a');
 
-// ---------------------------------------------------------- class exclusion
+// ---------------------------------------------------------- class scope
 
 const classText = ['class c;', '  logic inside_class;', 'endclass', 'logic g;'].join('\n');
 const classTable = buildScopeTable(classText);
 const classUnitSymbols = symbolsAt(classTable, endOfLine(classText, 'logic g;'));
-check('class: no span produced', classTable.spans.length, 0);
+check('class: span produced', classTable.spans.length, 1);
+check('class: span kind', classTable.spans[0].kind, 'class');
+checkTrue('class: span holds members', classTable.spans[0].symbols.some((s) => s.name === 'inside_class'));
 checkTrue('class: unit keeps g', names(classUnitSymbols).includes('g'));
 checkTrue('class: unit excludes members', !names(classUnitSymbols).includes('inside_class'));
 checkTrue('class: unit excludes class name', !names(classUnitSymbols).includes('c'));
@@ -427,6 +429,31 @@ check('ranged return function name incr', kindOf(fnHeaderSymbols, 'incr'), 'func
 check('automatic void task name t2', kindOf(fnHeaderSymbols, 't2'), 'task');
 check('function name merged once', fnHeaderSymbols.filter((s) => s.name === 'f').length, 1);
 checkTrue('commented function name not registered', !names(fnHeaderSymbols).includes('ghost'));
+
+// ------------------------------------------ out-of-body task local symbols
+
+const oobText = [
+  'class seq_c extends uvm_sequence;',
+  '  extern task gpio_cfg();',
+  '  virtual task body();',
+  '  endtask',
+  'endclass',
+  'task seq_c::gpio_cfg();',
+  '  bit [3:0] use_gpio_as_en;',
+  '  use_gpio_as_en = 4\'hf;',
+  '  if (use_gpio_as_en[0]) begin',
+  '  end',
+  'endtask',
+].join('\n');
+const oobTable = buildScopeTable(oobText);
+check('out-of-body task: class span', oobTable.spans.length, 1);
+check('out-of-body task: span kind', oobTable.spans[0].kind, 'class');
+checkTrue('out-of-body task: class member gpio_cfg', oobTable.spans[0].symbols.some((s) => s.name === 'gpio_cfg'));
+checkTrue('out-of-body task: class member body', oobTable.spans[0].symbols.some((s) => s.name === 'body'));
+const oobLocalOffset = oobText.indexOf('  if (use_gpio_as_en');
+const oobSymbols = symbolsAt(oobTable, oobLocalOffset + 6);
+checkTrue('out-of-body task: local var use_gpio_as_en visible', names(oobSymbols).includes('use_gpio_as_en'));
+check('out-of-body task: local var kind', kindOf(oobSymbols, 'use_gpio_as_en'), 'local');
 
 // ------------------------------------------------ adversarial: stale state
 

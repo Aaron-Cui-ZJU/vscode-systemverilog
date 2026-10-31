@@ -295,6 +295,36 @@ function symbolItems(table: ScopeTable, offset: number): CompletionItemPlus[] {
   return out;
 }
 
+function fileWordItems(masked: string, prefix: string, exclude: Set<string>): CompletionItemPlus[] {
+  if (!prefix) {
+    return [];
+  }
+  const lower = prefix.toLowerCase();
+  const seen = new Set(exclude);
+  const out: CompletionItemPlus[] = [];
+  const re = /[A-Za-z_]\w*/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(masked)) !== null) {
+    const name = m[0];
+    if (seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    if (!name.toLowerCase().startsWith(lower)) {
+      continue;
+    }
+    out.push({
+      label: name,
+      detail: 'in file',
+      kind: vscode.CompletionItemKind.Text,
+      insertText: name,
+      filterText: name,
+      sortText: '2' + name,
+    });
+  }
+  return out;
+}
+
 const packageKinds: Partial<Record<TypeInfo['tag'], vscode.CompletionItemKind>> = {
   decl: vscode.CompletionItemKind.Constant,
   typedef: vscode.CompletionItemKind.Class,
@@ -527,10 +557,18 @@ export function registerCompletion(context: vscode.ExtensionContext): void {
         const symbols = symbolItems(table, offset);
         items = items.concat(symbols);
         symbolCount = symbols.length;
+        const exclude = new Set(items.map((it) => it.label));
         if (INDEX.isBuilt()) {
           const members = await packageItems(table, offset);
           items = items.concat(members);
           symbolCount += members.length;
+          for (const mem of members) {
+            exclude.add(mem.label);
+          }
+        }
+        if (isCodePosition(table, offset)) {
+          const words = fileWordItems(table.masked, prefix, exclude);
+          items = items.concat(words);
         }
       }
       if (!items.length) {

@@ -29,7 +29,7 @@ export interface ScopeSymbol {
 }
 
 export interface ScopeSpan {
-  kind: 'module' | 'interface' | 'package';
+  kind: 'module' | 'interface' | 'package' | 'class';
   name: string;
   start: number;
   end: number;
@@ -45,7 +45,7 @@ export interface ScopeTable {
   unit: ScopeSymbol[];
 }
 
-type BlockKind = 'module' | 'interface' | 'package';
+type BlockKind = 'module' | 'interface' | 'package' | 'class';
 
 interface Region {
   start: number;
@@ -150,18 +150,16 @@ function inHeaderPortList(masked: string, index: number, headers: Region[]): boo
   return false;
 }
 
-function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
+function scanSpans(masked: string): { spans: ScopeSpan[] } {
   const stack: { kind: BlockKind; name: string; start: number }[] = [];
-  const classStack: number[] = [];
   const spans: ScopeSpan[] = [];
-  const classes: Region[] = [];
   const headers: Region[] = [];
   const re = new RegExp(reOpen.source, 'g');
   let m: RegExpExecArray | null;
   while ((m = re.exec(masked)) !== null) {
     const kw = m[1];
     const tokenEnd = m.index + m[0].length;
-    if (kw === 'endmodule' || kw === 'endinterface' || kw === 'endpackage') {
+    if (kw === 'endmodule' || kw === 'endinterface' || kw === 'endpackage' || kw === 'endclass') {
       const want = kw.slice(3) as BlockKind;
       for (let i = stack.length - 1; i >= 0; i--) {
         if (stack[i].kind === want) {
@@ -172,20 +170,13 @@ function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
       }
       continue;
     }
-    if (kw === 'endclass') {
-      const start = classStack.pop();
-      if (start !== undefined) {
-        classes.push({ start, end: tokenEnd });
-      }
-      continue;
-    }
     if (kw === 'class') {
       // `typedef class Foo;` is a forward declaration, not a scope.
       const before = masked.slice(Math.max(0, m.index - 32), m.index);
       if (/(?:^|[^\w$])typedef\s+$/.test(before)) {
         continue;
       }
-      classStack.push(m.index);
+      stack.push({ kind: 'class', name: readName(masked, tokenEnd), start: m.index });
       continue;
     }
     if (kw === 'interface') {
@@ -195,7 +186,7 @@ function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
         continue;
       }
       // `interface class C;` is a class declaration; the `class` token that
-      // follows opens the class scope.
+      // follows opens the class scope, so skip the `interface` token here.
       if (/^\s*class\b/.test(masked.slice(tokenEnd))) {
         continue;
       }
@@ -211,10 +202,7 @@ function scanSpans(masked: string): { spans: ScopeSpan[]; classes: Region[] } {
   for (const open of stack) {
     spans.push({ kind: open.kind, name: open.name, start: open.start, end: masked.length, symbols: [] });
   }
-  for (const start of classStack) {
-    classes.push({ start, end: masked.length });
-  }
-  return { spans, classes };
+  return { spans };
 }
 
 function blankRegions(text: string, regions: Region[]): string {
@@ -350,7 +338,7 @@ function withTerminator(slice: string, kind: BlockKind): string {
   if (kind === 'package') {
     return /\bendpackage\b/.test(slice) ? slice : slice + '\nendpackage';
   }
-  const end = kind === 'interface' ? 'endinterface' : 'endmodule';
+  const end = kind === 'interface' ? 'endinterface' : kind === 'class' ? 'endclass' : 'endmodule';
   return new RegExp('\\b' + end + '\\b').test(slice) ? slice : slice + '\n' + end;
 }
 
@@ -406,6 +394,12 @@ function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
     pushFunctionNames(out, source);
     return out;
   }
+  if (span.kind === 'class') {
+    pushTypes(out, getAllTypeInfo(source, true));
+    pushFunctions(out, getAllFunction(source, '\\w+'));
+    pushFunctionNames(out, source);
+    return out;
+  }
   const info = parseModuleHeader(source, escapeRe(span.name));
   if (info) {
     for (const p of info.port) {
@@ -430,12 +424,11 @@ function blockSymbols(slice: string, span: ScopeSpan): ScopeSymbol[] {
 
 export function buildScopeTable(text: string): ScopeTable {
   const { masked, ranges } = maskCommentRanges(text);
-  const { spans, classes } = scanSpans(masked);
+  const { spans } = scanSpans(masked);
   for (const span of spans) {
     span.symbols = dedupeSymbols(blockSymbols(masked.slice(span.start, span.end), span));
   }
   const blanks: Region[] = spans.slice();
-  blanks.push(...classes);
   const unitText = blankRegions(masked, blanks);
   const unitSource = removeRegions(masked, blanks);
   const unit: ScopeSymbol[] = [];
@@ -482,9 +475,9 @@ function functionSpans(masked: string, from: number, to: number): FunctionSpan[]
   return out;
 }
 
-function localSymbols(table: ScopeTable, span: ScopeSpan, offset: number): ScopeSymbol[] {
+function functionLocalSymbols(text: string, regionStart: number, regionEnd: number, offset: number): ScopeSymbol[] {
   let best: FunctionSpan | null = null;
-  for (const fn of functionSpans(table.masked, span.start, span.end)) {
+  for (const fn of functionSpans(text, regionStart, regionEnd)) {
     if (offset >= fn.start && offset <= fn.end && (!best || fn.start > best.start)) {
       best = fn;
     }
@@ -492,17 +485,21 @@ function localSymbols(table: ScopeTable, span: ScopeSpan, offset: number): Scope
   if (!best) {
     return [];
   }
-  const semi = table.masked.indexOf(';', best.start);
+  const semi = text.indexOf(';', best.start);
   if (semi < 0 || semi > best.endKeywordStart) {
     return [];
   }
   const out: ScopeSymbol[] = [];
-  const header = table.masked.slice(best.start, semi) + ';';
-  const body = table.masked.slice(semi + 1, best.endKeywordStart);
+  const header = text.slice(best.start, semi) + ';';
+  const body = text.slice(semi + 1, best.endKeywordStart);
   for (const ti of getAllTypeInfo(header).concat(getAllTypeInfo(body))) {
     out.push({ name: ti.name, detail: ti.decl ?? ti.type ?? ti.name, kind: 'local' });
   }
   return dedupeSymbols(out);
+}
+
+function localSymbols(table: ScopeTable, span: ScopeSpan, offset: number): ScopeSymbol[] {
+  return functionLocalSymbols(table.masked, span.start, span.end, offset);
 }
 
 export function symbolsAt(table: ScopeTable, offset: number): ScopeSymbol[] {
@@ -511,7 +508,9 @@ export function symbolsAt(table: ScopeTable, offset: number): ScopeSymbol[] {
   }
   const span = enclosingSpan(table, offset);
   if (!span) {
-    return table.unit.slice();
+    return dedupeSymbols(
+      table.unit.concat(functionLocalSymbols(table.unitText, 0, table.unitText.length, offset))
+    );
   }
   return dedupeSymbols(span.symbols.concat(localSymbols(table, span, offset)));
 }
